@@ -36,4 +36,10 @@ jobs:
           SUPABASE_KEY:   ${{ secrets.SUPABASE_KEY }}
         run: python ynnov_import.py
 
-      - name: Upload sc
+      - name: Upload screenshots de debug (sempre)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: /tmp/ynnov_*.png
+          if-no-files-found: ignore
