@@ -1,0 +1,45 @@
+name: Importar Reservas Ynnov
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  importar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Instalar dependências Python
+        run: |
+          pip install selenium openpyxl supabase
+
+      - name: Instalar ChromeDriver
+        uses: nanasess/setup-chromedriver@v2
+
+      - name: Correr bot de importação
+        env:
+          YNNOV_EMAIL:    ${{ secrets.YNNOV_EMAIL }}
+          YNNOV_PASSWORD: ${{ secrets.YNNOV_PASSWORD }}
+          SUPABASE_URL:   ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:   ${{ secrets.SUPABASE_KEY }}
+        run: python ynnov_import.py
+
+      - name: Upload screenshot de debug (se falhar)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshot
+          path: /tmp/ynnov_debug.png
+          if-no-files-found: ignore
