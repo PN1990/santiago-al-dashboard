@@ -266,22 +266,20 @@ def parse_data(valor):
     return None
 
 def converter_xls_para_csv(ficheiro):
-    """Converter XLS para CSV usando LibreOffice com ; como separador e . como decimal."""
+    """Converter XLS para XLSX usando LibreOffice e ler com openpyxl."""
     import subprocess, glob, tempfile
     out_dir = tempfile.mkdtemp()
-    log(f"A converter XLS para CSV com LibreOffice...")
-    # Filtro: 44=separador(;), 34=aspas("), 0=charset(UTF-8), 1=linha inicial
-    # field separator 59=';', text delimiter 34='"', charset 76=UTF-8
+    log(f"A converter XLS para XLSX com LibreOffice...")
     result = subprocess.run([
-        'libreoffice', '--headless', '--convert-to', 'csv:Text - txt - csv (StarCalc):59,34,76',
+        'libreoffice', '--headless', '--convert-to', 'xlsx',
         '--outdir', out_dir, ficheiro
     ], capture_output=True, text=True, timeout=60)
     log(f"LibreOffice stdout: {result.stdout}")
     log(f"LibreOffice stderr: {result.stderr}")
-    csvs = glob.glob(os.path.join(out_dir, "*.csv"))
-    if not csvs:
-        raise Exception("LibreOffice não gerou CSV.")
-    return csvs[0]
+    xlsx_files = glob.glob(os.path.join(out_dir, "*.xlsx"))
+    if not xlsx_files:
+        raise Exception("LibreOffice não gerou XLSX.")
+    return xlsx_files[0]
 
 def processar_excel(ficheiro):
     log(f"A processar Excel: {ficheiro}")
@@ -298,23 +296,13 @@ def processar_excel(ficheiro):
         except Exception as e:
             log(f"Engine {engine} falhou: {e}")
 
-    # Se falhou, converter com LibreOffice e ler CSV
+    # Se falhou, converter com LibreOffice para XLSX e ler com openpyxl
     if df is None:
         try:
-            csv_file = converter_xls_para_csv(ficheiro)
-            # Mostrar primeiras 2 linhas do CSV para debug
-            with open(csv_file, 'r', encoding='utf-8', errors='replace') as f:
-                linha1 = f.readline()
-                linha2 = f.readline()
-            log(f"CSV linha 1 (primeiros 200 chars): {repr(linha1[:200])}")
-            log(f"CSV linha 2 (primeiros 200 chars): {repr(linha2[:200])}")
-            # Detetar separador pela segunda linha (tem dados reais)
-            n_pv = linha2.count(';')
-            n_vg = linha2.count(',')
-            sep = ';' if n_pv > 5 else ','
-            decimal = ',' if sep == ';' else '.'
-            log(f"Detetado: sep='{sep}' (;={n_pv}, ,={n_vg}), decimal='{decimal}'")
-            df = pd.read_csv(csv_file, encoding='utf-8', sep=sep, decimal=decimal)
+            xlsx_file = converter_xls_para_csv(ficheiro)
+            log(f"A ler XLSX convertido: {xlsx_file}")
+            df = pd.read_excel(xlsx_file, engine='openpyxl')
+            log(f"XLSX lido com sucesso: {len(df.columns)} colunas, {len(df)} linhas")
         except Exception as e:
             log(f"Conversão LibreOffice falhou: {e}")
 
@@ -393,7 +381,11 @@ def processar_excel(ficheiro):
             "codigo_pais":       str(r.get("Código do país", val("Codigo do pais", "")) or ""),
             "alojamento":        str(val("Alojamento", "") or ""),
             "tmt":               safe_float(val("TMT", 0)),
-            "total":             safe_float(val("Total da reserva", val("Total", val("Pagamento", 0)))),
+            "total":             (lambda t, c, pct: t if t > 0 else (round(c / (pct if pct > 0 else 15) * 100, 2) if c > 0 else 0))(
+                                     safe_float(val("Total da reserva", val("Pagamento", 0))),
+                                     safe_float(r.get("Comissão do canal", val("Comissao do canal", 0))),
+                                     safe_float(val("Comissão do canal (%)", 0))
+                                 ),
             "estado":            str(val("Estado da reserva", "") or ""),
             "estado_pagamento":  str(val("Estado do pagamento", "") or ""),
             "canal":             str(val("Canal", "") or ""),
