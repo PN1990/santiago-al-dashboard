@@ -340,14 +340,18 @@ def processar_excel(ficheiro):
 
         def safe_float(v, default=0.0):
             try:
-                if v is None or str(v).strip() in ('nan', 'NaN', '', 'None'):
+                if v is None:
+                    return default
+                import math
+                if isinstance(v, float) and math.isnan(v):
+                    return default
+                s = str(v).strip()
+                if s in ('nan', 'NaN', '', 'None', '-', 'N/A'):
                     return default
                 # Converter formato português (vírgula decimal) para ponto
-                s = str(v).strip().replace(' ', '').replace('\xa0', '')
                 if ',' in s and '.' not in s:
                     s = s.replace(',', '.')
                 elif ',' in s and '.' in s:
-                    # ex: 1.375,66 -> 1375.66
                     s = s.replace('.', '').replace(',', '.')
                 return float(s)
             except:
@@ -359,10 +363,10 @@ def processar_excel(ficheiro):
                 return default
             return v
 
-        # Log campos monetários na primeira reserva para debug
-        if len(reservas) == 0:
-            campos_monetarios = ["Total da reserva", "Total", "Pagamento", "Em dívida", "Comissão do canal", "TMT"]
-            log("=== CAMPOS MONETÁRIOS PRIMEIRA LINHA ===")
+        # Log campos monetários nas primeiras 3 linhas para debug
+        if len(reservas) < 3:
+            campos_monetarios = ["Total da reserva", "Pagamento", "Em dívida", "Comissão do canal", "TMT"]
+            log(f"=== LINHA {len(reservas)+1} ({id_reserva if 'id_reserva' in dir() else '?'}) ===")
             for c in campos_monetarios:
                 log(f"  '{c}': {repr(r.get(c))}")
 
