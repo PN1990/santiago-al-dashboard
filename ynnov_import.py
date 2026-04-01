@@ -265,6 +265,30 @@ def parse_data(valor):
         return s[:10]
     return None
 
+def parse_hora(valor):
+    """Converter horas do Excel para string HH:MM."""
+    if valor is None:
+        return ""
+    import math
+    if isinstance(valor, float):
+        if math.isnan(valor):
+            return ""
+        # Excel guarda horas como fração do dia (ex: 0.875 = 21:00)
+        total_min = round(valor * 24 * 60)
+        h = total_min // 60
+        m = total_min % 60
+        return f"{h:02d}:{m:02d}"
+    # datetime ou time
+    if hasattr(valor, 'strftime'):
+        return valor.strftime("%H:%M")
+    s = str(valor).strip()
+    if s in ('', 'nan', 'NaT', 'None', '-'):
+        return ""
+    # Já vem como HH:MM ou HH:MM:SS
+    if ':' in s:
+        return s[:5]
+    return ""
+
 def converter_xls_para_csv(ficheiro):
     """Converter XLS para XLSX usando LibreOffice e ler com openpyxl."""
     import subprocess, glob, tempfile
@@ -368,9 +392,9 @@ def processar_excel(ficheiro):
             "id":                id_reserva,
             "hospede":           hospede,
             "checkin":           parse_data(val("Data de check-in")),
-            "hora_checkin":      str(val("Hora de check-in", "") or ""),
+            "hora_checkin":      parse_hora(val("Hora de check-in", "")),
             "checkout":          parse_data(val("Data de check-out")),
-            "hora_checkout":     str(val("Hora de check-out", "") or ""),
+            "hora_checkout":     parse_hora(val("Hora de check-out", "")),
             "noites":            safe_int(r.get("N.º de noites", val("N de noites", 0))),
             "adultos":           safe_int(val("Adultos", 0)),
             "criancas":          safe_int(r.get("Crianças", val("Criancas", 0))),
