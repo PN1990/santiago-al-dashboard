@@ -48,5 +48,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Instalar LibreOffice
-        run: sudo apt-get install -y --fix-missing libreoffice
+        run: |
+          sudo apt-get update --fix-missing
+          sudo apt-get install -y --fix-missing libreoffice
 
