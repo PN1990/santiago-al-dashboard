@@ -22,7 +22,9 @@ jobs:
         uses: browser-actions/setup-chrome@v1
 
       - name: Instalar LibreOffice
-        run: sudo apt-get install -y --no-install-recommends libreoffice-calc libreoffice-core
+        run: |
+          sudo apt-get install -y --no-install-recommends libreoffice-calc libreoffice-core || true
+          libreoffice --version
 
       - name: Instalar dependências Python
         run: |
