@@ -44,7 +44,6 @@ def criar_driver():
     opts.add_argument("--window-size=1280,900")
     opts.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-    # Pasta temporária para downloads
     download_dir = tempfile.mkdtemp()
     prefs = {
         "download.default_directory": download_dir,
@@ -63,7 +62,6 @@ def fazer_login(driver):
 
     wait = WebDriverWait(driver, 15)
 
-    # Preencher email
     log("A preencher email...")
     campo_email = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[name='email'], input[placeholder*='email' i]")))
     esperar(0.5, 1.5)
@@ -73,7 +71,6 @@ def fazer_login(driver):
         time.sleep(random.uniform(0.05, 0.15))
     esperar(0.5, 1.5)
 
-    # Preencher password
     log("A preencher password...")
     campo_pass = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
     campo_pass.clear()
@@ -82,12 +79,10 @@ def fazer_login(driver):
         time.sleep(random.uniform(0.05, 0.15))
     esperar(0.8, 2)
 
-    # Tirar screenshot antes de submeter (para debug)
     driver.save_screenshot("/tmp/ynnov_before_login.png")
     log(f"Screenshot tirado. URL atual: {driver.current_url}")
     log(f"Título da página: {driver.title}")
 
-    # Submeter -- tentar vários seletores
     log("A submeter login...")
     btn_login = None
     seletores_btn = [
@@ -105,14 +100,13 @@ def fazer_login(driver):
         try:
             elementos = driver.find_elements(By.CSS_SELECTOR, seletor)
             if elementos:
-                btn_login = elementos[-1]  # último botão da página
+                btn_login = elementos[-1]
                 log(f"Botão encontrado com: {seletor} -- texto: '{btn_login.text}'")
                 break
         except:
             continue
 
     if not btn_login:
-        # Tentar submeter com Enter no campo password
         log("Botão não encontrado, a tentar Enter no campo password...")
         from selenium.webdriver.common.keys import Keys
         campo_pass.send_keys(Keys.RETURN)
@@ -124,25 +118,57 @@ def fazer_login(driver):
     driver.save_screenshot("/tmp/ynnov_after_login.png")
     log(f"URL após login: {driver.current_url}")
 
-    # Verificar login
     if "login" in driver.current_url.lower():
-        # Mostrar HTML da página para debug
         log("Login pode ter falhado. HTML da página:")
         log(driver.page_source[:500])
         raise Exception("Login falhou! Ver screenshots de debug.")
     log(f"Login OK -- URL: {driver.current_url}")
 
+def clicar_elemento_por_texto(driver, texto, timeout=15):
+    """Tenta clicar num elemento pelo texto, com múltiplos métodos."""
+    xpaths = [
+        f"//*[normalize-space(text())='{texto}']",
+        f"//*[contains(text(),'{texto}')]",
+        f"//button[normalize-space(.)='{texto}']",
+        f"//button[contains(.,'{texto}')]",
+        f"//*[@title='{texto}']",
+    ]
+    # Método 1: WebDriverWait
+    for xpath in xpaths:
+        try:
+            wait = WebDriverWait(driver, timeout // len(xpaths))
+            el = wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
+            esperar(0.3, 0.8)
+            try:
+                el.click()
+            except:
+                driver.execute_script("arguments[0].click();", el)
+            log(f"Clicado '{texto}' via xpath: {xpath}")
+            return el
+        except:
+            continue
+
+    # Método 2: JavaScript direto — procurar por texto em todos os elementos
+    log(f"A tentar clicar '{texto}' via JavaScript...")
+    resultado = driver.execute_script(f"""
+        var elements = document.querySelectorAll('button, a, div, span');
+        for (var i = 0; i < elements.length; i++) {{
+            if (elements[i].textContent.trim() === '{texto}') {{
+                elements[i].click();
+                return true;
+            }}
+        }}
+        return false;
+    """)
+    if resultado:
+        log(f"Clicado '{texto}' via JavaScript.")
+        return True
+
+    raise Exception(f"Não foi possível clicar em '{texto}'")
+
 def clicar_texto(driver, texto, timeout=15):
-    """Encontrar e clicar num elemento pelo texto visível."""
-    wait = WebDriverWait(driver, timeout)
-    from selenium.webdriver.common.by import By
-    import selenium.webdriver.support.expected_conditions as EC
-    el = wait.until(EC.element_to_be_clickable(
-        (By.XPATH, f"//*[normalize-space(text())='{texto}' or @title='{texto}']")
-    ))
-    esperar(0.3, 0.8)
-    el.click()
-    return el
+    """Wrapper para compatibilidade."""
+    return clicar_elemento_por_texto(driver, texto, timeout)
 
 def descarregar_excel(driver, download_dir):
     import glob
@@ -150,23 +176,23 @@ def descarregar_excel(driver, download_dir):
 
     # 1. Clicar em Reservas no menu lateral
     log("A clicar em Reservas...")
-    clicar_texto(driver, "Reservas")
+    clicar_elemento_por_texto(driver, "Reservas")
     esperar(2, 3)
     driver.save_screenshot("/tmp/ynnov_reservas.png")
 
     # 2. Clicar em Lista
     log("A clicar em Lista...")
-    clicar_texto(driver, "Lista")
+    clicar_elemento_por_texto(driver, "Lista")
     esperar(1, 2)
     driver.save_screenshot("/tmp/ynnov_lista.png")
 
     # 3. Clicar em Filtros
     log("A clicar em Filtros...")
-    clicar_texto(driver, "Filtros")
+    clicar_elemento_por_texto(driver, "Filtros")
     esperar(1, 2)
     driver.save_screenshot("/tmp/ynnov_filtros.png")
 
-    # 4. Limpar todos os filtros de estado primeiro (clicar em "Clear" ou "Limpar")
+    # 4. Limpar filtros de estado
     log("A limpar filtros de estado...")
     try:
         btn_clear = driver.find_element(By.XPATH, "//button[normalize-space(text())='Clear' or normalize-space(text())='Limpar']")
@@ -174,23 +200,21 @@ def descarregar_excel(driver, download_dir):
         esperar(0.5, 1)
     except:
         log("Botão clear não encontrado, a tentar desselecionar todos...")
-        # Tentar clicar em "All" para desselecionar tudo
         try:
             btn_all = driver.find_element(By.XPATH, "//button[normalize-space(text())='All']")
             btn_all.click()
             esperar(0.5, 1)
-            btn_all.click()  # dois cliques para desselecionar
+            btn_all.click()
             esperar(0.5, 1)
         except:
             pass
 
-    # 5. Selecionar apenas Confirmado, Check-in e Check-out
+    # 5. Selecionar Confirmado, Check-in e Check-out
     for estado in ["Confirmado", "Check-in", "Check-out"]:
         log(f"A selecionar estado: {estado}...")
         try:
             els = driver.find_elements(By.XPATH, f"//span[normalize-space(text())='{estado}'] | //li[normalize-space(text())='{estado}'] | //div[normalize-space(text())='{estado}']")
             if els:
-                # Usar JavaScript click para evitar elementos sobrepostos
                 driver.execute_script("arguments[0].click();", els[0])
                 esperar(0.3, 0.8)
                 log(f"Estado '{estado}' selecionado.")
@@ -201,13 +225,51 @@ def descarregar_excel(driver, download_dir):
 
     driver.save_screenshot("/tmp/ynnov_filtros_selecionados.png")
 
-    # 6. Clicar em Aplicar
+    # 6. Clicar em Aplicar — método robusto com múltiplos fallbacks
     log("A clicar em Aplicar...")
-    clicar_texto(driver, "Aplicar")
+    aplicar_ok = False
+    aplicar_xpaths = [
+        "//button[normalize-space(text())='Aplicar']",
+        "//button[contains(text(),'Aplicar')]",
+        "//button[normalize-space(.)='Aplicar']",
+        "//*[normalize-space(text())='Aplicar']",
+        "//*[contains(@class,'apply')]",
+        "//button[contains(@class,'btn')][last()]",
+    ]
+    for xpath in aplicar_xpaths:
+        try:
+            els = driver.find_elements(By.XPATH, xpath)
+            if els:
+                driver.execute_script("arguments[0].click();", els[-1])
+                log(f"Aplicar clicado via: {xpath}")
+                aplicar_ok = True
+                break
+        except:
+            continue
+
+    if not aplicar_ok:
+        # Fallback: JavaScript direto
+        resultado = driver.execute_script("""
+            var btns = document.querySelectorAll('button');
+            for (var i = 0; i < btns.length; i++) {
+                if (btns[i].textContent.trim() === 'Aplicar') {
+                    btns[i].click();
+                    return true;
+                }
+            }
+            return false;
+        """)
+        if resultado:
+            log("Aplicar clicado via JavaScript fallback.")
+            aplicar_ok = True
+
+    if not aplicar_ok:
+        log("AVISO: Botão Aplicar não encontrado, a continuar sem filtros...")
+
     esperar(2, 3)
     driver.save_screenshot("/tmp/ynnov_apos_filtros.png")
 
-    # 7. Clicar no botão XLS para download
+    # 7. Clicar no botão XLS
     log("A clicar no botão XLS...")
     seletores_xls = [
         "//button[normalize-space(text())='xls' or normalize-space(text())='XLS']",
@@ -249,11 +311,9 @@ def descarregar_excel(driver, download_dir):
 
 # ── Processar Excel ───────────────────────────────────────────────────────────
 def parse_data(valor):
-    """Converter datas do Excel para string YYYY-MM-DD."""
     import pandas as pd
     if valor is None or (isinstance(valor, float) and str(valor) == 'nan'):
         return None
-    # pandas Timestamp
     if hasattr(valor, 'strftime'):
         return valor.strftime("%Y-%m-%d")
     if isinstance(valor, datetime):
@@ -266,31 +326,26 @@ def parse_data(valor):
     return None
 
 def parse_hora(valor):
-    """Converter horas do Excel para string HH:MM."""
     if valor is None:
         return ""
     import math
     if isinstance(valor, float):
         if math.isnan(valor):
             return ""
-        # Excel guarda horas como fração do dia (ex: 0.875 = 21:00)
         total_min = round(valor * 24 * 60)
         h = total_min // 60
         m = total_min % 60
         return f"{h:02d}:{m:02d}"
-    # datetime ou time
     if hasattr(valor, 'strftime'):
         return valor.strftime("%H:%M")
     s = str(valor).strip()
     if s in ('', 'nan', 'NaT', 'None', '-'):
         return ""
-    # Já vem como HH:MM ou HH:MM:SS
     if ':' in s:
         return s[:5]
     return ""
 
-def converter_xls_para_csv(ficheiro):
-    """Converter XLS para XLSX usando LibreOffice e ler com openpyxl."""
+def converter_xls_para_xlsx(ficheiro):
     import subprocess, glob, tempfile
     out_dir = tempfile.mkdtemp()
     log(f"A converter XLS para XLSX com LibreOffice...")
@@ -311,7 +366,6 @@ def processar_excel(ficheiro):
 
     df = None
 
-    # Tentar ler directamente com pandas
     for engine in ['xlrd', 'openpyxl']:
         try:
             df = pd.read_excel(ficheiro, engine=engine)
@@ -320,10 +374,9 @@ def processar_excel(ficheiro):
         except Exception as e:
             log(f"Engine {engine} falhou: {e}")
 
-    # Se falhou, converter com LibreOffice para XLSX e ler com openpyxl
     if df is None:
         try:
-            xlsx_file = converter_xls_para_csv(ficheiro)
+            xlsx_file = converter_xls_para_xlsx(ficheiro)
             log(f"A ler XLSX convertido: {xlsx_file}")
             df = pd.read_excel(xlsx_file, engine='openpyxl')
             log(f"XLSX lido com sucesso: {len(df.columns)} colunas, {len(df)} linhas")
@@ -360,7 +413,6 @@ def processar_excel(ficheiro):
                 s = str(v).strip()
                 if s in ('nan', 'NaN', '', 'None', '-', 'N/A'):
                     return default
-                # Converter formato português (vírgula decimal) para ponto
                 if ',' in s and '.' not in s:
                     s = s.replace(',', '.')
                 elif ',' in s and '.' in s:
@@ -375,10 +427,9 @@ def processar_excel(ficheiro):
                 return default
             return v
 
-        # Log campos monetários nas primeiras 3 linhas para debug
         if len(reservas) < 3:
             campos_monetarios = ["Total da reserva", "Pagamento", "Em dívida", "Comissão do canal", "TMT"]
-            log(f"=== LINHA {len(reservas)+1} ({id_reserva if 'id_reserva' in dir() else '?'}) ===")
+            log(f"=== LINHA {len(reservas)+1} ===")
             for c in campos_monetarios:
                 log(f"  '{c}': {repr(r.get(c))}")
 
@@ -425,7 +476,6 @@ def processar_excel(ficheiro):
             "estado_aima":       str(val("Estado da AIMA", "") or ""),
         })
 
-    # Filtrar só reservas a decorrer e futuras (checkout >= hoje)
     from datetime import date
     hoje = date.today().strftime("%Y-%m-%d")
     estados_validos = {"Confirmado", "Check-in", "Check-out"}
@@ -434,7 +484,6 @@ def processar_excel(ficheiro):
         if r.get("checkout") and r["checkout"] >= hoje
         and r.get("estado", "") in estados_validos
     ]
-    # Log de debug dos primeiros totais
     for r in reservas_filtradas[:3]:
         log(f"Debug reserva {r['id']}: total={r.get('total')}, comissao={r.get('comissao')}")
     log(f"{len(reservas)} reservas lidas, {len(reservas_filtradas)} válidas (futuras/a decorrer e não canceladas).")
@@ -445,7 +494,6 @@ def importar_supabase(reservas):
     log("A ligar ao Supabase...")
     db = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    # Guardar campos manuais antes de apagar
     log("A guardar campos manuais...")
     result = db.from_("reservas").select(
         "id,hora_checkin,hora_checkout,hora_checkin_manual,hora_checkout_manual,"
@@ -457,21 +505,17 @@ def importar_supabase(reservas):
     for r in (result.data or []):
         manuais[r["id"]] = r
 
-    # Apagar tudo
     log("A limpar base de dados...")
     db.from_("reservas").delete().neq("id", "__never__").execute()
 
-    # Reinserir com campos manuais preservados
     log("A inserir reservas...")
     reservas_final = []
     for r in reservas:
         m = manuais.get(r["id"], {})
-        # Horas: preservar se marcadas como manuais, senão usar Excel
         if m.get("hora_checkin_manual"):
             r["hora_checkin"] = m.get("hora_checkin") or r["hora_checkin"]
         if m.get("hora_checkout_manual"):
             r["hora_checkout"] = m.get("hora_checkout") or r["hora_checkout"]
-        # Campos sempre manuais
         r["hora_checkin_manual"]  = m.get("hora_checkin_manual", False)
         r["hora_checkout_manual"] = m.get("hora_checkout_manual", False)
         r["caucao_necessaria"]    = m.get("caucao_necessaria")
