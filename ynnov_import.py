@@ -478,14 +478,15 @@ def processar_excel(ficheiro):
 
     from datetime import date
     hoje = date.today().strftime("%Y-%m-%d")
-    estados_validos = {"Confirmado", "Check-in", "Check-out"}
+    estados_excluir = {"Cancelado", "Cancelada", "Cancelled", "No show"}
     reservas_filtradas = [
         r for r in reservas
-        if r.get("estado", "") in estados_validos
+        if r.get("estado", "") not in estados_excluir
+        and r.get("id")
     ]
     for r in reservas_filtradas[:3]:
-        log(f"Debug reserva {r['id']}: total={r.get('total')}, comissao={r.get('comissao')}")
-    log(f"{len(reservas)} reservas lidas, {len(reservas_filtradas)} válidas (não canceladas).")
+        log(f"Debug reserva {r['id']}: estado={r.get('estado')}, total={r.get('total')}, comissao={r.get('comissao')}")
+    log(f"{len(reservas)} reservas lidas, {len(reservas_filtradas)} válidas (excluídos cancelados).")
     return reservas_filtradas
 
 # ── Importar para Supabase ────────────────────────────────────────────────────
