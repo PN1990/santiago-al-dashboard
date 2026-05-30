@@ -23,8 +23,10 @@ jobs:
 
       - name: Instalar LibreOffice
         run: |
-          sudo apt-get install -y --no-install-recommends libreoffice-calc libreoffice-core || true
-          libreoffice --version
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-calc libreoffice-core 2>/dev/null || \
+          sudo snap install libreoffice
+          libreoffice --version 2>/dev/null || true
 
       - name: Instalar dependências Python
         run: |
