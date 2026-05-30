@@ -186,88 +186,9 @@ def descarregar_excel(driver, download_dir):
     esperar(1, 2)
     driver.save_screenshot("/tmp/ynnov_lista.png")
 
-    # 3. Clicar em Filtros
-    log("A clicar em Filtros...")
-    clicar_elemento_por_texto(driver, "Filtros")
-    esperar(1, 2)
-    driver.save_screenshot("/tmp/ynnov_filtros.png")
-
-    # 4. Limpar filtros de estado
-    log("A limpar filtros de estado...")
-    try:
-        btn_clear = driver.find_element(By.XPATH, "//button[normalize-space(text())='Clear' or normalize-space(text())='Limpar']")
-        btn_clear.click()
-        esperar(0.5, 1)
-    except:
-        log("Botão clear não encontrado, a tentar desselecionar todos...")
-        try:
-            btn_all = driver.find_element(By.XPATH, "//button[normalize-space(text())='All']")
-            btn_all.click()
-            esperar(0.5, 1)
-            btn_all.click()
-            esperar(0.5, 1)
-        except:
-            pass
-
-    # 5. Selecionar Confirmado, Check-in e Check-out
-    for estado in ["Confirmado", "Check-in", "Check-out"]:
-        log(f"A selecionar estado: {estado}...")
-        try:
-            els = driver.find_elements(By.XPATH, f"//span[normalize-space(text())='{estado}'] | //li[normalize-space(text())='{estado}'] | //div[normalize-space(text())='{estado}']")
-            if els:
-                driver.execute_script("arguments[0].click();", els[0])
-                esperar(0.3, 0.8)
-                log(f"Estado '{estado}' selecionado.")
-            else:
-                log(f"Aviso: elemento '{estado}' não encontrado.")
-        except Exception as e:
-            log(f"Aviso: erro ao selecionar '{estado}': {e}")
-
-    driver.save_screenshot("/tmp/ynnov_filtros_selecionados.png")
-
-    # 6. Clicar em Aplicar — método robusto com múltiplos fallbacks
-    log("A clicar em Aplicar...")
-    aplicar_ok = False
-    aplicar_xpaths = [
-        "//button[normalize-space(text())='Aplicar']",
-        "//button[contains(text(),'Aplicar')]",
-        "//button[normalize-space(.)='Aplicar']",
-        "//*[normalize-space(text())='Aplicar']",
-        "//*[contains(@class,'apply')]",
-        "//button[contains(@class,'btn')][last()]",
-    ]
-    for xpath in aplicar_xpaths:
-        try:
-            els = driver.find_elements(By.XPATH, xpath)
-            if els:
-                driver.execute_script("arguments[0].click();", els[-1])
-                log(f"Aplicar clicado via: {xpath}")
-                aplicar_ok = True
-                break
-        except:
-            continue
-
-    if not aplicar_ok:
-        # Fallback: JavaScript direto
-        resultado = driver.execute_script("""
-            var btns = document.querySelectorAll('button');
-            for (var i = 0; i < btns.length; i++) {
-                if (btns[i].textContent.trim() === 'Aplicar') {
-                    btns[i].click();
-                    return true;
-                }
-            }
-            return false;
-        """)
-        if resultado:
-            log("Aplicar clicado via JavaScript fallback.")
-            aplicar_ok = True
-
-    if not aplicar_ok:
-        log("AVISO: Botão Aplicar não encontrado, a continuar sem filtros...")
-
-    esperar(2, 3)
-    driver.save_screenshot("/tmp/ynnov_apos_filtros.png")
+    # 3. Sem filtros — exportar tudo e filtrar em Python
+    log("A saltar filtros — a exportar todas as reservas...")
+    driver.save_screenshot("/tmp/ynnov_sem_filtros.png")
 
     # 7. Clicar no botão XLS
     log("A clicar no botão XLS...")
