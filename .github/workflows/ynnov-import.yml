@@ -30,7 +30,7 @@ jobs:
 
       - name: Instalar dependências Python
         run: |
-          pip install selenium openpyxl xlrd pandas supabase
+          pip install selenium openpyxl xlrd pandas requests
 
       - name: Instalar ChromeDriver
         uses: nanasess/setup-chromedriver@v2
@@ -39,8 +39,8 @@ jobs:
         env:
           YNNOV_EMAIL:    ${{ secrets.YNNOV_EMAIL }}
           YNNOV_PASSWORD: ${{ secrets.YNNOV_PASSWORD }}
-          SUPABASE_URL:   ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY:   ${{ secrets.SUPABASE_KEY }}
+          API_URL:        ${{ secrets.API_URL }}
+          BOT_SECRET:     ${{ secrets.BOT_SECRET }}
         run: python ynnov_import.py
 
       - name: Upload screenshots de debug (sempre)

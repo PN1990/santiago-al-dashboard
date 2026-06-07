@@ -11,7 +11,6 @@
 <meta name="apple-mobile-web-app-title" content="PNStays">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -360,6 +359,13 @@
 </head>
 <body>
 
+<div id="loginOverlay" style="position:fixed;inset:0;z-index:9999;background:var(--bg,#0d1117);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px">
+  <div style="font-size:1.3rem;font-weight:600;color:var(--text,#fff)">🔒 PNStays — Acesso reservado</div>
+  <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" style="padding:10px 14px;border-radius:8px;border:1px solid var(--surface2,#333);background:var(--surface,#161b22);color:var(--text,#fff);font-size:1rem;width:240px">
+  <button id="loginBtn" style="padding:10px 20px;border-radius:8px;border:none;background:var(--accent,#4f9cf9);color:#fff;font-size:1rem;cursor:pointer">Entrar</button>
+  <div id="loginError" style="color:var(--red,#e25c5c);font-size:0.85rem;min-height:18px"></div>
+</div>
+
 <header>
   <div class="logo">
     <div class="logo-icon"><img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAoACgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDxKiium8N2GlRWWn6tf/bbiebUWggtYoYXicxrE37zzWAIJkAx0wOTzQBkX2lXVjYWd3dGOI3imSGAn96Yu0pX+FW5255bBIGME0K9V1nT9R1db3W7Tw9o1zcrdtDd2+qWXk3bTbQwCATFZQVIwFxj5QByueO8W6RLHDHrUVpptlbSRWqyW1rchzFJJBvDFMkoHCswGTjOKAObooooAK6vSrN77wtpMSS2sSxalfXEsl0m+KOKOC3Z2dcHcMD7uDkkDvXKV0Wh3F4vhy7tJPELaZptxKYzAYi4nYhS/AG4DCx5x149KAO+VtMvPDelW03iV5f7Te/vp9Vht/s7WZtY4mjjEP8ACFdImJGPkUBRXLeML3Ub/T/EMusW1vbagmrWMU8VuMRhktp03KOmGChhjg7sjjFZ+jag9tpd7pR8UyWli7yIIki3LIHUBn5GQrAAEAjOB1pnie5vo9LttJuPET38UIiZLXy8CIBCFySM5VSAAScBscdKAObooooAv6bqEdnbXEMmmWF55xGJLhGLx4DDCkEYzuyfdV9K0YvEsUd1Jcf8Ix4ecvKJNj2rFFwQdoXdjbxgj3PrRRQAv/CTriIDw34eARgT/ofLgBBg89Dszx3ZvWoLLXY7ZWH9gaNMWk35lgLY+cvgc4A52/QAdqKKAKmqahHfJAqaZY2RiUKWtkZfMwqrlsk5Py5z6s3rRRRQB//Z" alt="PNStays"></div>
@@ -369,6 +375,7 @@
     <div class="status-dot" id="statusDot" style="background:var(--muted);box-shadow:none"></div>
     <div class="date-badge" id="currentDate"></div>
     <button class="refresh-btn" id="refreshBtn" onclick="manualRefresh()" title="Atualizar dados">↻</button>
+    <button class="refresh-btn" onclick="clearToken();location.reload()" title="Sair">⎋</button>
     <label class="upload-btn" for="fileInput">
       ↑ Importar Excel
     </label>
@@ -473,11 +480,67 @@
 </div>
 
 <script>
-// ---- SUPABASE CONFIG ----
-const SUPABASE_URL = 'https://munydmqvwflrbsxuyhii.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11bnlkbXF2d2ZscmJzeHV5aGlpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MDkzNDcsImV4cCI6MjA4ODI4NTM0N30.HI6SDb_jg6fQooVO58XTJMvk_9sRrlj6iL62Pr5GZCE';
-const { createClient } = supabase;
-const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+// ---- API CONFIG ----
+const API_BASE = 'https://santiago-al-dashboard-api.<SUBDOMAIN>.workers.dev';
+const TOKEN_KEY = 'al_dashboard_token';
+
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
+async function apiFetch(path, options = {}) {
+  const token = getToken();
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const res = await fetch(API_BASE + path, { ...options, headers });
+  if (res.status === 401) {
+    clearToken();
+    showLogin();
+    throw new Error('Sessão expirada — inicia sessão novamente.');
+  }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || 'Erro ao comunicar com o servidor');
+  return body;
+}
+
+function showLogin() {
+  document.getElementById('loginOverlay').style.display = 'flex';
+}
+function hideLogin() {
+  document.getElementById('loginOverlay').style.display = 'none';
+}
+
+async function doLogin() {
+  const pwd = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  if (!pwd) return;
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(API_BASE + '/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Password incorreta');
+    setToken(body.token);
+    hideLogin();
+    document.getElementById('loginPassword').value = '';
+    await loadData();
+    checkPushSubscribed();
+  } catch (e) {
+    errEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('loginBtn').addEventListener('click', doLogin);
+document.getElementById('loginPassword').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+if (getToken()) hideLogin(); else showLogin();
 
 let DATA = [];
 let activeFilter = 'todos';
@@ -524,12 +587,16 @@ function aptDot(alojamento) {
 
 // ---- LOAD DATA ----
 async function loadData() {
-  const { data, error } = await db.from('reservas').select('*').order('checkin');
-  if(error) { console.error(error); return; }
-  DATA = data || [];
-  document.getElementById('statusDot').style.background = 'var(--green)';
-  document.getElementById('statusDot').style.boxShadow = '0 0 6px var(--green)';
-  renderAll();
+  if (!getToken()) return;
+  try {
+    const { data } = await apiFetch('/api/reservas');
+    DATA = data || [];
+    document.getElementById('statusDot').style.background = 'var(--green)';
+    document.getElementById('statusDot').style.boxShadow = '0 0 6px var(--green)';
+    renderAll();
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 // ---- EXCEL UPLOAD ----
@@ -580,41 +647,15 @@ document.getElementById('fileInput').addEventListener('change', async function(e
         estado_aima: r['Estado da AIMA'] || '',
       })).filter(r => r.id && r.hospede);
 
-      showToast('A guardar na base de dados...', 75);
+      showToast('A guardar na base de dados...', 80);
 
-      // 1. Guardar campos manuais das reservas existentes
-      const { data: existentes } = await db.from('reservas').select('id,hora_checkin,hora_checkout,hora_checkin_manual,hora_checkout_manual,caucao_necessaria,caucao_cobrada,caucao_valor,pessoas_extra,custo_pessoa_extra,notas_internas,dados_pessoais_ok');
-      const manuais = {};
-      (existentes || []).forEach(r => { manuais[r.id] = r; });
+      // O servidor preserva os campos editados manualmente e substitui os dados
+      const result = await apiFetch('/api/reservas/import', {
+        method: 'POST',
+        body: JSON.stringify({ reservas }),
+      });
 
-      // 2. Apagar tudo
-      await db.from('reservas').delete().neq('id', '__never__');
-
-      showToast('A guardar na base de dados...', 85);
-
-      // 3. Reinserir com campos manuais preservados
-      const reservasComManuais = reservas.map(r => ({
-        ...r,
-        hora_checkin:        manuais[r.id]?.hora_checkin_manual  ? manuais[r.id].hora_checkin  : (r.hora_checkin  || manuais[r.id]?.hora_checkin  || ''),
-        hora_checkout:       manuais[r.id]?.hora_checkout_manual ? manuais[r.id].hora_checkout : (r.hora_checkout || manuais[r.id]?.hora_checkout || ''),
-        hora_checkin_manual:  manuais[r.id]?.hora_checkin_manual  || false,
-        hora_checkout_manual: manuais[r.id]?.hora_checkout_manual || false,
-        caucao_necessaria:   manuais[r.id]?.caucao_necessaria   ?? r.caucao_necessaria,
-        caucao_cobrada:      manuais[r.id]?.caucao_cobrada      ?? r.caucao_cobrada,
-        caucao_valor:        manuais[r.id]?.caucao_valor        ?? r.caucao_valor,
-        pessoas_extra:       manuais[r.id]?.pessoas_extra       ?? r.pessoas_extra,
-        custo_pessoa_extra:  manuais[r.id]?.custo_pessoa_extra  ?? r.custo_pessoa_extra,
-        notas_internas:      manuais[r.id]?.notas_internas      ?? r.notas_internas,
-        dados_pessoais_ok:   manuais[r.id]?.dados_pessoais_ok   ?? r.dados_pessoais_ok,
-      }));
-
-      const BATCH = 100;
-      for(let i = 0; i < reservasComManuais.length; i += BATCH) {
-        const { error } = await db.from('reservas').insert(reservasComManuais.slice(i, i + BATCH));
-        if(error) throw error;
-      }
-
-      showToast('✓ ' + reservas.length + ' reservas importadas!', 100, true);
+      showToast('✓ ' + (result.count ?? reservas.length) + ' reservas importadas!', 100, true);
       setTimeout(() => hideToast(), 3000);
       await loadData();
     } catch(err) {
@@ -1022,11 +1063,10 @@ async function subscribePush() {
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
     });
     const s = sub.toJSON();
-    await db.from('push_subscriptions').upsert({
-      endpoint: s.endpoint,
-      p256dh: s.keys.p256dh,
-      auth: s.keys.auth
-    }, { onConflict: 'endpoint' });
+    await apiFetch('/api/push-subscriptions', {
+      method: 'POST',
+      body: JSON.stringify({ endpoint: s.endpoint, p256dh: s.keys.p256dh, auth: s.keys.auth }),
+    });
     document.getElementById('notifBanner').classList.remove('show');
     alert('✅ Notificações ativadas! Vais receber avisos no dia anterior a cada check-in.');
   } catch(e) {
@@ -1100,15 +1140,18 @@ async function saveEdit() {
     dados_pessoais_ok: document.getElementById('editDadosOk').checked,
     updated_at: new Date().toISOString()
   };
-  const { error } = await db.from('reservas').update(updates).eq('id', id);
-  if(error) {
-    alert('Erro ao guardar: ' + error.message);
-  } else {
+  try {
+    await apiFetch('/api/reservas/' + encodeURIComponent(id), {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
     // Update local data
     const idx = DATA.findIndex(r => r.id === id);
     if(idx !== -1) DATA[idx] = { ...DATA[idx], ...updates };
     document.getElementById('editModalOverlay').classList.remove('open');
     renderAll();
+  } catch (e) {
+    alert('Erro ao guardar: ' + e.message);
   }
   btn.disabled = false;
   btn.textContent = '💾 Guardar Alterações';
@@ -1137,8 +1180,10 @@ async function manualRefresh() {
 // Auto-refresh a cada 12 horas
 setInterval(() => { loadData(); }, 12 * 60 * 60 * 1000);
 
-loadData();
-checkPushSubscribed();
+if (getToken()) {
+  loadData();
+  checkPushSubscribed();
+}
 </script>
 
 <!-- EDIT MODAL -->

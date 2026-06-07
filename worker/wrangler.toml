@@ -1,0 +1,13 @@
+name = "santiago-al-dashboard-api"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "santiago-al-dashboard"
+database_id = "1307d137-6c49-4a01-880c-8da312e8861c"
+
+# Secrets (set via `wrangler secret put`, NOT stored here):
+#   APP_PASSWORD   - shared family login password
+#   AUTH_SECRET    - random string used to sign session tokens
+#   BOT_SECRET     - token used by the GitHub Actions bot to push reservation data

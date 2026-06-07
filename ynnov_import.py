@@ -19,13 +19,13 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 import openpyxl
-from supabase import create_client
+import requests
 
 # ── Configuração (via GitHub Secrets) ─────────────────────────────────────────
 YNNOV_EMAIL    = os.environ["YNNOV_EMAIL"]
 YNNOV_PASSWORD = os.environ["YNNOV_PASSWORD"]
-SUPABASE_URL   = os.environ["SUPABASE_URL"]
-SUPABASE_KEY   = os.environ["SUPABASE_KEY"]
+API_URL        = os.environ["API_URL"]
+BOT_SECRET     = os.environ["BOT_SECRET"]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def esperar(min_s=1.5, max_s=3.5):
@@ -410,61 +410,31 @@ def processar_excel(ficheiro):
     log(f"{len(reservas)} reservas lidas, {len(reservas_filtradas)} válidas (excluídos cancelados).")
     return reservas_filtradas
 
-# ── Importar para Supabase ────────────────────────────────────────────────────
-def importar_supabase(reservas):
-    log("A ligar ao Supabase...")
-    db = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-    log("A guardar campos manuais...")
-    result = db.from_("reservas").select(
-        "id,hora_checkin,hora_checkout,hora_checkin_manual,hora_checkout_manual,"
-        "caucao_necessaria,caucao_cobrada,caucao_valor,pessoas_extra,"
-        "custo_pessoa_extra,notas_internas,dados_pessoais_ok"
-    ).execute()
-
-    manuais = {}
-    for r in (result.data or []):
-        manuais[r["id"]] = r
-
-    log("A limpar base de dados...")
-    db.from_("reservas").delete().neq("id", "__never__").execute()
-
-    log("A inserir reservas...")
-    reservas_final = []
-    for r in reservas:
-        m = manuais.get(r["id"], {})
-        if m.get("hora_checkin_manual"):
-            r["hora_checkin"] = m.get("hora_checkin") or r["hora_checkin"]
-        if m.get("hora_checkout_manual"):
-            r["hora_checkout"] = m.get("hora_checkout") or r["hora_checkout"]
-        r["hora_checkin_manual"]  = m.get("hora_checkin_manual", False)
-        r["hora_checkout_manual"] = m.get("hora_checkout_manual", False)
-        r["caucao_necessaria"]    = m.get("caucao_necessaria")
-        r["caucao_cobrada"]       = m.get("caucao_cobrada", False)
-        r["caucao_valor"]         = m.get("caucao_valor", 0)
-        r["pessoas_extra"]        = m.get("pessoas_extra", 0)
-        r["custo_pessoa_extra"]   = m.get("custo_pessoa_extra", 0)
-        r["notas_internas"]       = m.get("notas_internas", "")
-        r["dados_pessoais_ok"]    = m.get("dados_pessoais_ok", False)
-        reservas_final.append(r)
-
-    BATCH = 100
-    for i in range(0, len(reservas_final), BATCH):
-        lote = reservas_final[i:i+BATCH]
-        db.from_("reservas").insert(lote).execute()
-        log(f"Inseridas {min(i+BATCH, len(reservas_final))}/{len(reservas_final)} reservas...")
-
-    log("✅ Importação concluída!")
+# ── Importar via API (Cloudflare Worker) ──────────────────────────────────────
+def importar_worker(reservas):
+    log("A enviar reservas para a API...")
+    resp = requests.post(
+        API_URL.rstrip("/") + "/api/bot/import",
+        headers={
+            "Authorization": f"Bearer {BOT_SECRET}",
+            "Content-Type": "application/json",
+        },
+        json={"reservas": reservas},
+        timeout=120,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    log(f"✅ Importação concluída! {body.get('count', len(reservas))} reservas guardadas.")
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    log("🤖 Bot Ynnov → Supabase iniciado")
+    log("🤖 Bot Ynnov → Dashboard iniciado")
     driver, download_dir = criar_driver()
     try:
         fazer_login(driver)
         ficheiro = descarregar_excel(driver, download_dir)
         reservas = processar_excel(ficheiro)
-        importar_supabase(reservas)
+        importar_worker(reservas)
     finally:
         driver.quit()
         log("Browser fechado.")
