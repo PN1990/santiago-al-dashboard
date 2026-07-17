@@ -808,7 +808,7 @@ function buildCharts(ativas) {
   const apts = [...new Set(DATA.map(r=>r.alojamento))].filter(Boolean);
   destroyChart('ocup');
   charts.ocup = new Chart(document.getElementById('chartOcupacao'), {
-    type:'bar', data:{ labels:apts.map(a=>shortApt(a)), datasets:[{data:apts.map(a=>ativas.filter(r=>r.alojamento===a).reduce((s,r)=>s+Number(r.noites||0),0)), backgroundColor:['rgba(79,218,140,0.7)','rgba(249,123,79,0.7)','rgba(249,217,79,0.7)'], borderRadius:6}] },
+    type:'bar', data:{ labels:apts.map(a=>shortApt(a)), datasets:[{data:apts.map(a=>ativas.filter(r=>r.alojamento===a).reduce((s,r)=>s+Number(r.noites||0),0)), backgroundColor:apts.map(a=>(APT_COLORS[a]&&APT_COLORS[a].border)||'rgba(150,150,150,0.5)'), borderRadius:6}] },
     options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#6b7280',font:{size:10}}}, y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#6b7280'}} } }
   });
 
@@ -1032,7 +1032,7 @@ function renderReceitas() {
   const apts = [...new Set(DATA.map(r=>r.alojamento))].filter(Boolean);
   destroyChart('aptRec');
   charts.aptRec = new Chart(document.getElementById('chartAptReceita'), {
-    type:'doughnut', data:{ labels:apts.map(a=>shortApt(a)), datasets:[{data:apts.map(a=>ativas.filter(r=>r.alojamento===a).reduce((s,r)=>s+Number(r.total||0),0)), backgroundColor:['rgba(79,156,249,0.8)','rgba(79,218,140,0.8)','rgba(249,217,79,0.8)'], borderWidth:0, hoverOffset:6}] },
+    type:'doughnut', data:{ labels:apts.map(a=>shortApt(a)), datasets:[{data:apts.map(a=>ativas.filter(r=>r.alojamento===a).reduce((s,r)=>s+Number(r.total||0),0)), backgroundColor:apts.map(a=>(APT_COLORS[a]&&APT_COLORS[a].text)||'#888'), borderWidth:0, hoverOffset:6}] },
     options:{ responsive:true, plugins:{legend:{position:'bottom',labels:{color:'#6b7280',padding:14,font:{family:'DM Mono'}}}} }
   });
 
