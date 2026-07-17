@@ -558,6 +558,7 @@ function estadoBadge(e) {
 }
 function canalBadge(c) { return `<span class="badge ${(c||'').toLowerCase()}">${c}</span>`; }
 function pagBadge(p) {
+  if(!p) return '';
   const m = {'Pago':'pago','Pendente':'pendente','N/A':'na'};
   return `<span class="badge ${m[p]||'na'}">${p}</span>`;
 }
@@ -609,43 +610,50 @@ document.getElementById('fileInput').addEventListener('change', async function(e
   reader.onload = async function(ev) {
     try {
       showToast('A processar dados...', 40);
-      const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array', cellDates: true });
+      const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { raw: false });
+      const rows = XLSX.utils.sheet_to_json(ws, { raw: true });
 
       showToast('A transformar registos...', 65);
-      const reservas = rows.map(r => ({
-        id: String(r['ID'] || ''),
-        hospede: r['Hóspede'] || r['Hospede'] || '',
-        checkin: parseExcelDate(r['Data de check-in']),
-        hora_checkin: r['Hora de check-in'] || '',
-        checkout: parseExcelDate(r['Data de check-out']),
-        hora_checkout: r['Hora de check-out'] || '',
-        noites: parseInt(r['N.º de noites'] || r['N de noites'] || 0) || 0,
-        adultos: parseInt(r['Adultos'] || 0) || 0,
-        criancas: parseInt(r['Crianças'] || r['Criancas'] || 0) || 0,
-        bebes: parseInt(r['Bebés'] || r['Bebes'] || 0) || 0,
-        telefone: String(r['Telefone'] || ''),
-        email: r['Email (pessoal)'] || r['Email (canal)'] || '',
-        pais: r['País'] || r['Pais'] || '',
-        codigo_pais: r['Código do país'] || r['Codigo do pais'] || '',
-        alojamento: r['Alojamento'] || '',
-        tmt: parseFloat(r['TMT'] || 0) || 0,
-        total: parseFloat(r['Total da reserva'] || 0) || 0,
-        estado: r['Estado da reserva'] || '',
-        estado_pagamento: r['Estado do pagamento'] || '',
-        canal: r['Canal'] || '',
-        comissao: parseFloat(r['Comissão do canal'] || r['Comissao do canal'] || 0) || 0,
-        comissao_pct: parseFloat(r['Comissão do canal (%)'] || 0) || 0,
-        id_canal: String(r['ID da reserva (canal)'] || ''),
-        data_criacao: parseExcelDate(r['Data de criação'] || r['Data de criacao']),
-        antecedencia: parseInt(r['Antecedência da reserva (dias)'] || 0) || 0,
-        checkin_efetuado: r['Check-in efetuado a...'] || '',
-        checkout_efetuado: r['Check-out efetuado a...'] || '',
-        notas_canal: r['Notas do canal'] || '',
-        fatura: r['Fatura(s)'] || '',
-        estado_aima: r['Estado da AIMA'] || '',
-      })).filter(r => r.id && r.hospede);
+      // Mapeamento da exportação Talkguest (Reservas → Lista de Reservas → Ações → Exportar)
+      const reservas = rows.map(r => {
+        const total = tgNum(r['Valor Reserva']);
+        const comissao = tgNum(r['Comissão Canal']);
+        const criancas = (parseInt(r['Crianças sujeitas TMT'] || 0) || 0)
+                       + (parseInt(r['Crianças não sujeitas TMT'] || 0) || 0);
+        return {
+          id: String(r['Reserva'] || '').trim(),
+          hospede: String(r['Hóspede'] || '').trim(),
+          checkin: tgDate(r['Checkin']),
+          hora_checkin: tgTime(r['Hora Prevista Checkin']),
+          checkout: tgDate(r['Checkout']),
+          hora_checkout: tgTime(r['Hora Prevista Checkout']),
+          noites: parseInt(r['Noites'] || 0) || 0,
+          adultos: parseInt(r['Adultos'] || 0) || 0,
+          criancas: criancas,
+          bebes: 0,
+          telefone: '',
+          email: '',
+          pais: '',
+          codigo_pais: '',
+          alojamento: tgAloj(r['Alojamento']),
+          tmt: 0,
+          total: total,
+          estado: tgEstado(r['Estado']),
+          estado_pagamento: '',
+          canal: tgCanal(r['Canal']),
+          comissao: comissao,
+          comissao_pct: total > 0 ? Math.round(comissao / total * 1000) / 10 : 0,
+          id_canal: String(r['Reserva'] || '').trim(),
+          data_criacao: tgDate(r['Reservado em']),
+          antecedencia: 0,
+          checkin_efetuado: '',
+          checkout_efetuado: '',
+          notas_canal: '',
+          fatura: '',
+          estado_aima: '',
+        };
+      }).filter(r => r.id && r.hospede && r.estado !== 'Indisponivel' && r.canal !== 'Interno');
 
       showToast('A guardar na base de dados...', 80);
 
@@ -667,14 +675,60 @@ document.getElementById('fileInput').addEventListener('change', async function(e
   this.value = '';
 });
 
-function parseExcelDate(v) {
-  if(!v) return null;
-  if(typeof v === 'string' && v.match(/^\d{4}-\d{2}-\d{2}/)) return v.substring(0,10);
-  if(typeof v === 'string' && v.match(/^\d{2}\/\d{2}\/\d{4}/)) {
-    const [d,m,y] = v.split('/');
-    return `${y}-${m}-${d}`;
-  }
+// ---- HELPERS DE IMPORTAÇÃO (Talkguest) ----
+// Excel guarda datas/horas como número de série; convertemos em UTC para
+// evitar desvios de fuso horário (o utilizador está em Portugal, UTC±0/1).
+function excelSerialToDate(serial) {
+  return new Date(Math.round((serial - 25569) * 86400 * 1000));
+}
+function tgDate(v) {
+  if(v === null || v === undefined || v === '') return null;
+  let d = null;
+  if(v instanceof Date) d = v;
+  else if(typeof v === 'number') d = excelSerialToDate(v);
+  if(d) return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+  const s = String(v).trim();
+  if(s.match(/^\d{4}-\d{2}-\d{2}/)) return s.substring(0,10);
+  if(s.match(/^\d{2}\/\d{2}\/\d{4}/)) { const [dd,mm,yy] = s.split(/[\/\s]/); return `${yy}-${mm}-${dd}`; }
   return null;
+}
+function tgTime(v) {
+  if(v === null || v === undefined || v === '') return '';
+  let d = null;
+  if(v instanceof Date) d = v;
+  else if(typeof v === 'number') d = excelSerialToDate(v);
+  if(d) {
+    const hh = d.getUTCHours(), mm = d.getUTCMinutes();
+    return (hh === 0 && mm === 0) ? '' : `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+  }
+  const m = String(v).match(/(\d{1,2}):(\d{2})/);
+  if(m) { const hh = +m[1], mm = +m[2]; return (hh === 0 && mm === 0) ? '' : `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`; }
+  return '';
+}
+function tgNum(v) {
+  if(v === null || v === undefined || v === '') return 0;
+  if(typeof v === 'number') return v;
+  let s = String(v).trim().replace(/\s/g,'');
+  if(s.includes(',') && s.includes('.')) s = s.replace(/\./g,'').replace(',','.');
+  else if(s.includes(',')) s = s.replace(',','.');
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+// Normaliza nomes da Talkguest para os valores que a app usa (herdados da Ynnov).
+function tgAloj(a) {
+  const s = String(a || '').trim();
+  return s === 'Casa Santiago II' ? 'Casa Santiago II Funchal' : s;
+}
+function tgCanal(c) {
+  const s = String(c || '').trim();
+  if(s === 'Booking.com') return 'Booking';
+  if(s === 'Airbnb') return 'AirBnB';
+  return s;
+}
+function tgEstado(e) {
+  const s = String(e || '').trim();
+  if(s === 'Cancelada' || s === 'Cancelled') return 'Cancelado';
+  return s;
 }
 
 function showToast(msg, pct, success=false, error=false) {
@@ -694,8 +748,8 @@ function renderAll() {
     document.getElementById('overviewContent').innerHTML = `
       <div class="empty-state">
         <div class="icon">📂</div>
-        <p>Ainda não há dados importados.<br>Carrega o Excel da Ynnov para começar!</p>
-        <label class="empty-upload-btn" for="fileInput">↑ Importar Excel da Ynnov</label>
+        <p>Ainda não há dados importados.<br>Carrega o Excel da Talkguest para começar!</p>
+        <label class="empty-upload-btn" for="fileInput">↑ Importar Excel da Talkguest</label>
       </div>`;
     return;
   }
@@ -1015,9 +1069,9 @@ function renderAlertas() {
     if(diff>=0 && diff<=2) alerts.push({type:'info',icon:'🔑',title:`Check-out em breve — ${r.hospede}`,desc:`${shortApt(r.alojamento)} · ${fmtDate(r.checkout)} ${r.hora_checkout||''}`,time:fmtDate(r.checkout)});
   });
 
-  DATA.filter(r=>r.estado!=='Cancelado' && !r.fatura && r.canal==='AirBnB' && Number(r.total)>0).forEach(r => {
-    alerts.push({type:'warn',icon:'🧾',title:`Fatura em falta — ${r.hospede}`,desc:`Reserva Airbnb sem fatura · ${eur(r.total)}`,time:shortApt(r.alojamento)});
-  });
+  // Alerta de "Fatura em falta" desativado: a exportação da Talkguest não inclui
+  // o estado de faturação, pelo que o campo `fatura` fica sempre vazio e o alerta
+  // dispararia para todas as reservas Airbnb (falsos positivos).
 
   document.getElementById('alertCount').textContent = alerts.length || '';
   document.getElementById('alertsList').innerHTML = alerts.length
