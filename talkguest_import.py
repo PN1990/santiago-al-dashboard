@@ -1,0 +1,484 @@
+#!/usr/bin/env python3
+"""
+Bot para descarregar reservas da Talkguest e importar para o dashboard
+(Cloudflare Worker + D1). Corre automaticamente via GitHub Actions.
+
+Fluxo:
+  1. Login em app.talkguest.com (email + password)
+  2. Se aparecer 2FA, lê o código do Gmail via IMAP e submete
+  3. Navega para Reservas -> Lista de Reservas
+  4. Ações -> Exportar -> descarrega o XLSX
+  5. Lê o XLSX (openpyxl), mapeia/normaliza para o formato da app
+  6. Envia para o Worker (/api/bot/import) preservando os campos manuais
+
+Secrets necessários (GitHub Actions):
+  TALKGUEST_EMAIL      email de login na Talkguest
+  TALKGUEST_PASSWORD   password da Talkguest
+  API_URL              URL do Worker (ex: https://santiago-al-dashboard-api.pnstays.workers.dev)
+  BOT_SECRET           token partilhado com o Worker
+  GMAIL_ADDRESS        (opcional) email que recebe o 2FA (default: pedro.mafia@gmail.com)
+  GMAIL_APP_PASSWORD   App Password do Gmail (só necessário se a Talkguest pedir 2FA)
+
+NOTA: os seletores de login/2FA/exportação são "best-effort" porque foram
+escritos sem acesso ao DOM real da Talkguest. A primeira execução gera
+screenshots de debug (/tmp/tg_*.png, publicados como artifact) para afinar.
+"""
+
+import os
+import re
+import time
+import random
+import glob
+import tempfile
+import imaplib
+import email
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone, date
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+import openpyxl
+import requests
+
+# ── Configuração (via GitHub Secrets) ─────────────────────────────────────────
+TALKGUEST_EMAIL    = os.environ["TALKGUEST_EMAIL"]
+TALKGUEST_PASSWORD = os.environ["TALKGUEST_PASSWORD"]
+API_URL            = os.environ["API_URL"]
+BOT_SECRET         = os.environ["BOT_SECRET"]
+GMAIL_ADDRESS      = os.environ.get("GMAIL_ADDRESS", "pedro.mafia@gmail.com")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+
+# ── Parâmetros afináveis ──────────────────────────────────────────────────────
+LOGIN_URL          = os.environ.get("TALKGUEST_LOGIN_URL", "https://app.talkguest.com/login")
+# Remetente(s) esperado(s) do email de 2FA (match parcial, minúsculas)
+TWOFA_FROM_HINTS   = ["talkguest"]
+# Regex do código 2FA no corpo do email (default: 6 dígitos)
+TWOFA_CODE_REGEX   = re.compile(r"\b(\d{6})\b")
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def esperar(min_s=1.5, max_s=3.5):
+    time.sleep(random.uniform(min_s, max_s))
+
+def log(msg):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+# ── Selenium ──────────────────────────────────────────────────────────────────
+def criar_driver():
+    opts = Options()
+    opts.add_argument("--headless=new")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--window-size=1400,1000")
+    opts.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+    download_dir = tempfile.mkdtemp()
+    prefs = {
+        "download.default_directory": download_dir,
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+        "safebrowsing.enabled": True,
+    }
+    opts.add_experimental_option("prefs", prefs)
+    driver = webdriver.Chrome(options=opts)
+    return driver, download_dir
+
+def _digitar(campo, texto):
+    campo.clear()
+    for ch in texto:
+        campo.send_keys(ch)
+        time.sleep(random.uniform(0.04, 0.13))
+
+def clicar_por_texto(driver, texto, timeout=12):
+    """Clica no primeiro elemento clicável que contém `texto`."""
+    xpaths = [
+        f"//*[normalize-space(text())='{texto}']",
+        f"//button[contains(normalize-space(.),'{texto}')]",
+        f"//a[contains(normalize-space(.),'{texto}')]",
+        f"//*[@title='{texto}']",
+        f"//*[contains(normalize-space(text()),'{texto}')]",
+    ]
+    for xpath in xpaths:
+        try:
+            el = WebDriverWait(driver, max(2, timeout // len(xpaths))).until(
+                EC.element_to_be_clickable((By.XPATH, xpath)))
+            esperar(0.3, 0.8)
+            try:
+                el.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", el)
+            log(f"Clicado '{texto}' via {xpath}")
+            return True
+        except Exception:
+            continue
+    # último recurso: JS por textContent exato
+    ok = driver.execute_script(
+        """
+        const alvo = arguments[0];
+        const els = document.querySelectorAll('button, a, div, span, li');
+        for (const el of els) {
+            if (el.textContent.trim() === alvo) { el.click(); return true; }
+        }
+        return false;
+        """, texto)
+    if ok:
+        log(f"Clicado '{texto}' via JS")
+        return True
+    return False
+
+# ── Login + 2FA ───────────────────────────────────────────────────────────────
+def fazer_login(driver):
+    log(f"A abrir login da Talkguest: {LOGIN_URL}")
+    driver.get(LOGIN_URL)
+    esperar(2, 4)
+    wait = WebDriverWait(driver, 20)
+
+    log("A preencher email...")
+    campo_email = wait.until(EC.presence_of_element_located((
+        By.CSS_SELECTOR,
+        "input[type='email'], input[name='email'], input[name='username'], input[placeholder*='email' i]")))
+    _digitar(campo_email, TALKGUEST_EMAIL)
+    esperar(0.4, 1)
+
+    log("A preencher password...")
+    campo_pass = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
+    _digitar(campo_pass, TALKGUEST_PASSWORD)
+    esperar(0.5, 1.2)
+
+    driver.save_screenshot("/tmp/tg_1_login.png")
+    inicio_login = datetime.now(timezone.utc)
+
+    log("A submeter login...")
+    if not clicar_por_texto(driver, "Entrar") and not clicar_por_texto(driver, "Login"):
+        for sel in ["button[type='submit']", "input[type='submit']", "form button"]:
+            els = driver.find_elements(By.CSS_SELECTOR, sel)
+            if els:
+                try:
+                    els[-1].click()
+                    break
+                except Exception:
+                    continue
+        else:
+            campo_pass.send_keys(Keys.RETURN)
+    esperar(3, 5)
+    driver.save_screenshot("/tmp/tg_2_apos_login.png")
+    log(f"URL após login: {driver.current_url}")
+
+    # 2FA?
+    if precisa_2fa(driver):
+        log("Pedido de 2FA detetado. A ler código do Gmail...")
+        codigo = ler_codigo_2fa(inicio_login)
+        log(f"Código 2FA obtido: {codigo}")
+        submeter_2fa(driver, codigo)
+        esperar(3, 5)
+        driver.save_screenshot("/tmp/tg_3_apos_2fa.png")
+
+    if "login" in driver.current_url.lower():
+        log("HTML da página (debug): " + driver.page_source[:600])
+        raise Exception("Login falhou (ainda na página de login). Ver screenshots de debug.")
+    log(f"Login OK -- URL: {driver.current_url}")
+
+def precisa_2fa(driver):
+    """Deteta se a página está a pedir um código de verificação."""
+    try:
+        # inputs típicos de código
+        campos = driver.find_elements(
+            By.CSS_SELECTOR,
+            "input[name*='code' i], input[name*='otp' i], input[name*='token' i], "
+            "input[autocomplete='one-time-code'], input[inputmode='numeric']")
+        if campos:
+            return True
+        txt = driver.page_source.lower()
+        marcadores = ["código de verificação", "codigo de verificacao", "verification code",
+                      "autenticação de dois", "two-factor", "two factor", "2fa"]
+        return any(m in txt for m in marcadores)
+    except Exception:
+        return False
+
+def submeter_2fa(driver, codigo):
+    campos = driver.find_elements(
+        By.CSS_SELECTOR,
+        "input[name*='code' i], input[name*='otp' i], input[name*='token' i], "
+        "input[autocomplete='one-time-code'], input[inputmode='numeric'], input[type='text']")
+    if not campos:
+        raise Exception("Campo de 2FA não encontrado.")
+    if len(campos) >= len(codigo) and len(campos) >= 4:
+        # um input por dígito
+        for c, ch in zip(campos, codigo):
+            c.send_keys(ch)
+            time.sleep(random.uniform(0.05, 0.15))
+    else:
+        _digitar(campos[0], codigo)
+    esperar(0.5, 1.2)
+    if not clicar_por_texto(driver, "Verificar") and not clicar_por_texto(driver, "Confirmar") \
+       and not clicar_por_texto(driver, "Entrar"):
+        campos[0].send_keys(Keys.RETURN)
+
+def _texto_email(msg):
+    partes = []
+    if msg.is_multipart():
+        for part in msg.walk():
+            ct = part.get_content_type()
+            if ct in ("text/plain", "text/html"):
+                try:
+                    partes.append(part.get_payload(decode=True).decode(
+                        part.get_content_charset() or "utf-8", errors="ignore"))
+                except Exception:
+                    pass
+    else:
+        try:
+            partes.append(msg.get_payload(decode=True).decode(
+                msg.get_content_charset() or "utf-8", errors="ignore"))
+        except Exception:
+            pass
+    return "\n".join(partes)
+
+def ler_codigo_2fa(desde_utc, timeout=150):
+    """Procura no Gmail (IMAP) o código de 2FA mais recente da Talkguest."""
+    if not GMAIL_APP_PASSWORD:
+        raise Exception("GMAIL_APP_PASSWORD não definido, mas a Talkguest pediu 2FA.")
+    deadline = time.time() + timeout
+    margem = 60  # segundos de tolerância antes do início do login
+    while time.time() < deadline:
+        try:
+            M = imaplib.IMAP4_SSL("imap.gmail.com")
+            M.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            M.select("INBOX")
+            typ, data = M.search(None, "ALL")
+            ids = data[0].split()
+            for msg_id in reversed(ids[-25:]):
+                typ, msg_data = M.fetch(msg_id, "(RFC822)")
+                msg = email.message_from_bytes(msg_data[0][1])
+                remetente = (msg.get("From") or "").lower()
+                if not any(h in remetente for h in TWOFA_FROM_HINTS):
+                    continue
+                # só emails recebidos depois do início do login
+                try:
+                    dt = parsedate_to_datetime(msg.get("Date"))
+                    if dt and dt.timestamp() < desde_utc.timestamp() - margem:
+                        continue
+                except Exception:
+                    pass
+                corpo = (msg.get("Subject") or "") + "\n" + _texto_email(msg)
+                m = TWOFA_CODE_REGEX.search(corpo)
+                if m:
+                    M.logout()
+                    return m.group(1)
+            M.logout()
+        except Exception as e:
+            log(f"Erro IMAP (retry): {e}")
+        esperar(6, 9)
+    raise Exception("Código 2FA não encontrado no Gmail dentro do tempo limite.")
+
+# ── Navegação + exportação ────────────────────────────────────────────────────
+def descarregar_excel(driver, download_dir):
+    log("A navegar para Reservas -> Lista de Reservas...")
+    clicar_por_texto(driver, "Reservas")
+    esperar(1.5, 2.5)
+    clicar_por_texto(driver, "Lista de Reservas")
+    esperar(2, 3)
+    driver.save_screenshot("/tmp/tg_4_lista.png")
+
+    log("A abrir menu 'Ações'...")
+    clicar_por_texto(driver, "Ações")
+    esperar(1, 2)
+    driver.save_screenshot("/tmp/tg_5_acoes.png")
+
+    log("A clicar em 'Exportar'...")
+    if not clicar_por_texto(driver, "Exportar"):
+        driver.save_screenshot("/tmp/tg_debug.png")
+        raise Exception("Opção 'Exportar' não encontrada. Ver screenshots de debug.")
+    esperar(2, 3)
+    # possível modal com escolha de formato — tentar Excel/XLSX
+    for fmt in ["Excel", "XLSX", "xlsx", "Exportar"]:
+        if clicar_por_texto(driver, fmt, timeout=4):
+            break
+    driver.save_screenshot("/tmp/tg_6_exportar.png")
+
+    log("A aguardar download do XLSX...")
+    ficheiro = esperar_download(download_dir, timeout=60)
+    log(f"XLSX descarregado: {ficheiro}")
+    return ficheiro
+
+def esperar_download(download_dir, timeout=60):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        # ignora downloads a meio (.crdownload)
+        if not glob.glob(os.path.join(download_dir, "*.crdownload")):
+            fichs = glob.glob(os.path.join(download_dir, "*.xlsx")) + \
+                    glob.glob(os.path.join(download_dir, "*.xls"))
+            if fichs:
+                return sorted(fichs, key=os.path.getmtime)[-1]
+        time.sleep(1.5)
+    raise Exception("Download do Excel não concluído no tempo limite.")
+
+# ── Parsing (mesma lógica verificada no index.html) ───────────────────────────
+def tg_data(v):
+    if v is None or v == "":
+        return None
+    if hasattr(v, "strftime"):
+        return v.strftime("%Y-%m-%d")
+    s = str(v).strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2}", s):
+        return s[:10]
+    if re.match(r"^\d{2}/\d{2}/\d{4}", s):
+        p = re.split(r"[/\s]", s)
+        return f"{p[2]}-{p[1]}-{p[0]}"
+    return None
+
+def tg_hora(v):
+    if v is None or v == "":
+        return ""
+    if hasattr(v, "hour"):
+        hh, mm = v.hour, v.minute
+        return "" if (hh == 0 and mm == 0) else f"{hh:02d}:{mm:02d}"
+    m = re.search(r"(\d{1,2}):(\d{2})", str(v))
+    if m:
+        hh, mm = int(m.group(1)), int(m.group(2))
+        return "" if (hh == 0 and mm == 0) else f"{hh:02d}:{mm:02d}"
+    return ""
+
+def tg_num(v):
+    if v is None or v == "":
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip().replace(" ", "")
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
+def tg_int(v):
+    try:
+        return int(round(tg_num(v)))
+    except Exception:
+        return 0
+
+def tg_aloj(a):
+    s = str(a or "").strip()
+    return "Casa Santiago II Funchal" if s == "Casa Santiago II" else s
+
+def tg_canal(c):
+    s = str(c or "").strip()
+    if s == "Booking.com":
+        return "Booking"
+    if s == "Airbnb":
+        return "AirBnB"
+    return s
+
+def tg_estado(e):
+    s = str(e or "").strip()
+    if s in ("Cancelada", "Cancelled"):
+        return "Cancelado"
+    return s
+
+def processar_excel(ficheiro):
+    log(f"A processar Excel: {ficheiro}")
+    wb = openpyxl.load_workbook(ficheiro, data_only=True)
+    ws = wb[wb.sheetnames[0]]
+    linhas = list(ws.iter_rows(values_only=True))
+    if not linhas:
+        raise Exception("Ficheiro Excel vazio.")
+
+    headers = [str(c).strip() if c is not None else "" for c in linhas[0]]
+    log(f"Colunas encontradas: {headers}")
+    idx = {h: i for i, h in enumerate(headers)}
+
+    def cel(row, nome):
+        i = idx.get(nome)
+        return row[i] if (i is not None and i < len(row)) else None
+
+    reservas = []
+    ignorados_bloqueio = 0
+    for row in linhas[1:]:
+        id_r    = str(cel(row, "Reserva") or "").strip()
+        hospede = str(cel(row, "Hóspede") or "").strip()
+        estado  = tg_estado(cel(row, "Estado"))
+        canal   = tg_canal(cel(row, "Canal"))
+
+        if estado == "Indisponivel" or canal == "Interno":
+            ignorados_bloqueio += 1
+            continue
+        if not id_r or not hospede:
+            continue
+
+        total    = tg_num(cel(row, "Valor Reserva"))
+        comissao = tg_num(cel(row, "Comissão Canal"))
+        criancas = tg_int(cel(row, "Crianças sujeitas TMT")) + tg_int(cel(row, "Crianças não sujeitas TMT"))
+
+        reservas.append({
+            "id":                id_r,
+            "hospede":           hospede,
+            "checkin":           tg_data(cel(row, "Checkin")),
+            "hora_checkin":      tg_hora(cel(row, "Hora Prevista Checkin")),
+            "checkout":          tg_data(cel(row, "Checkout")),
+            "hora_checkout":     tg_hora(cel(row, "Hora Prevista Checkout")),
+            "noites":            tg_int(cel(row, "Noites")),
+            "adultos":           tg_int(cel(row, "Adultos")),
+            "criancas":          criancas,
+            "bebes":             0,
+            "telefone":          "",
+            "email":             "",
+            "pais":              "",
+            "codigo_pais":       "",
+            "alojamento":        tg_aloj(cel(row, "Alojamento")),
+            "tmt":               0,
+            "total":             total,
+            "estado":            estado,
+            "estado_pagamento":  "",
+            "canal":             canal,
+            "comissao":          comissao,
+            "comissao_pct":      round(comissao / total * 100, 1) if total > 0 else 0,
+            "id_canal":          id_r,
+            "data_criacao":      tg_data(cel(row, "Reservado em")),
+            "antecedencia":      0,
+            "checkin_efetuado":  "",
+            "checkout_efetuado": "",
+            "notas_canal":       "",
+            "fatura":            "",
+            "estado_aima":       "",
+        })
+
+    log(f"{len(reservas)} reservas válidas ({ignorados_bloqueio} bloqueios internos ignorados).")
+    for r in reservas[:3]:
+        log(f"  ex: {r['id']} | {r['hospede']} | {r['alojamento']} | {r['canal']} | {r['checkin']}→{r['checkout']} | {r['total']}€")
+    return reservas
+
+# ── Importar via API (Cloudflare Worker) ──────────────────────────────────────
+def importar_worker(reservas):
+    if not reservas:
+        raise Exception("Sem reservas para importar — abortado para não apagar dados.")
+    log(f"A enviar {len(reservas)} reservas para a API...")
+    resp = requests.post(
+        API_URL.rstrip("/") + "/api/bot/import",
+        headers={"Authorization": f"Bearer {BOT_SECRET}", "Content-Type": "application/json"},
+        json={"reservas": reservas},
+        timeout=120,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    log(f"✅ Importação concluída! {body.get('count', len(reservas))} reservas guardadas.")
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+def main():
+    log("🤖 Bot Talkguest → Dashboard iniciado")
+    driver, download_dir = criar_driver()
+    try:
+        fazer_login(driver)
+        ficheiro = descarregar_excel(driver, download_dir)
+        reservas = processar_excel(ficheiro)
+        importar_worker(reservas)
+    finally:
+        driver.quit()
+        log("Browser fechado.")
+
+if __name__ == "__main__":
+    main()

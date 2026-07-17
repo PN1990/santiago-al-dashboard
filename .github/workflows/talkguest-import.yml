@@ -1,4 +1,4 @@
-name: Importar Reservas Ynnov
+name: Importar Reservas Talkguest
 
 on:
   schedule:
@@ -21,32 +21,26 @@ jobs:
       - name: Instalar Chrome
         uses: browser-actions/setup-chrome@v1
 
-      - name: Instalar LibreOffice
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libreoffice-calc libreoffice-core 2>/dev/null || \
-          sudo snap install libreoffice
-          libreoffice --version 2>/dev/null || true
-
-      - name: Instalar dependências Python
-        run: |
-          pip install selenium openpyxl xlrd pandas requests
-
       - name: Instalar ChromeDriver
         uses: nanasess/setup-chromedriver@v2
 
+      - name: Instalar dependências Python
+        run: pip install selenium openpyxl requests
+
       - name: Correr bot de importação
         env:
-          YNNOV_EMAIL:    ${{ secrets.YNNOV_EMAIL }}
-          YNNOV_PASSWORD: ${{ secrets.YNNOV_PASSWORD }}
-          API_URL:        ${{ secrets.API_URL }}
-          BOT_SECRET:     ${{ secrets.BOT_SECRET }}
-        run: python ynnov_import.py
+          TALKGUEST_EMAIL:    ${{ secrets.TALKGUEST_EMAIL }}
+          TALKGUEST_PASSWORD: ${{ secrets.TALKGUEST_PASSWORD }}
+          API_URL:            ${{ secrets.API_URL }}
+          BOT_SECRET:         ${{ secrets.BOT_SECRET }}
+          GMAIL_ADDRESS:      ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python talkguest_import.py
 
       - name: Upload screenshots de debug (sempre)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: debug-screenshots
-          path: /tmp/ynnov_*.png
+          path: /tmp/tg_*.png
           if-no-files-found: ignore
