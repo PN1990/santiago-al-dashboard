@@ -33,8 +33,9 @@ jobs:
           TALKGUEST_PASSWORD: ${{ secrets.TALKGUEST_PASSWORD }}
           API_URL:            ${{ secrets.API_URL }}
           BOT_SECRET:         ${{ secrets.BOT_SECRET }}
-          GMAIL_ADDRESS:      ${{ secrets.GMAIL_ADDRESS }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          MAIL_2FA_ADDRESS:   ${{ secrets.MAIL_2FA_ADDRESS }}
+          MAIL_2FA_PASSWORD:  ${{ secrets.MAIL_2FA_PASSWORD }}
+          MAIL_2FA_IMAP_HOST: ${{ secrets.MAIL_2FA_IMAP_HOST }}
         run: python talkguest_import.py
 
       - name: Upload screenshots de debug (sempre)

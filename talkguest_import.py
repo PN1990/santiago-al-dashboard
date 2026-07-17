@@ -16,8 +16,10 @@ Secrets necessários (GitHub Actions):
   TALKGUEST_PASSWORD   password da Talkguest
   API_URL              URL do Worker (ex: https://santiago-al-dashboard-api.pnstays.workers.dev)
   BOT_SECRET           token partilhado com o Worker
-  GMAIL_ADDRESS        (opcional) email que recebe o 2FA (default: pedro.mafia@gmail.com)
-  GMAIL_APP_PASSWORD   App Password do Gmail (só necessário se a Talkguest pedir 2FA)
+  MAIL_2FA_ADDRESS     caixa de correio que RECEBE o código 2FA da Talkguest
+  MAIL_2FA_PASSWORD    App Password / password IMAP dessa caixa (só se houver 2FA)
+  MAIL_2FA_IMAP_HOST   (opcional) servidor IMAP; default imap.gmail.com
+                       (Outlook: outlook.office365.com · iCloud: imap.mail.me.com)
 
 NOTA: os seletores de login/2FA/exportação são "best-effort" porque foram
 escritos sem acesso ao DOM real da Talkguest. A primeira execução gera
@@ -49,8 +51,9 @@ TALKGUEST_EMAIL    = os.environ["TALKGUEST_EMAIL"]
 TALKGUEST_PASSWORD = os.environ["TALKGUEST_PASSWORD"]
 API_URL            = os.environ["API_URL"]
 BOT_SECRET         = os.environ["BOT_SECRET"]
-GMAIL_ADDRESS      = os.environ.get("GMAIL_ADDRESS", "pedro.mafia@gmail.com")
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+MAIL_2FA_ADDRESS   = os.environ.get("MAIL_2FA_ADDRESS", "")
+MAIL_2FA_PASSWORD  = os.environ.get("MAIL_2FA_PASSWORD", "")
+MAIL_2FA_IMAP_HOST = os.environ.get("MAIL_2FA_IMAP_HOST", "").strip() or "imap.gmail.com"
 
 # ── Parâmetros afináveis ──────────────────────────────────────────────────────
 LOGIN_URL          = os.environ.get("TALKGUEST_LOGIN_URL", "https://app.talkguest.com/login")
@@ -238,14 +241,14 @@ def _texto_email(msg):
 
 def ler_codigo_2fa(desde_utc, timeout=150):
     """Procura no Gmail (IMAP) o código de 2FA mais recente da Talkguest."""
-    if not GMAIL_APP_PASSWORD:
-        raise Exception("GMAIL_APP_PASSWORD não definido, mas a Talkguest pediu 2FA.")
+    if not MAIL_2FA_ADDRESS or not MAIL_2FA_PASSWORD:
+        raise Exception("MAIL_2FA_ADDRESS/MAIL_2FA_PASSWORD não definidos, mas a Talkguest pediu 2FA.")
     deadline = time.time() + timeout
     margem = 60  # segundos de tolerância antes do início do login
     while time.time() < deadline:
         try:
-            M = imaplib.IMAP4_SSL("imap.gmail.com")
-            M.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            M = imaplib.IMAP4_SSL(MAIL_2FA_IMAP_HOST)
+            M.login(MAIL_2FA_ADDRESS, MAIL_2FA_PASSWORD)
             M.select("INBOX")
             typ, data = M.search(None, "ALL")
             ids = data[0].split()
