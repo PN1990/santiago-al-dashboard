@@ -1223,6 +1223,25 @@ function caucaoBadge(r) {
 // ---- INIT ----
 document.getElementById('currentDate').textContent = new Date().toLocaleDateString('pt-PT',{weekday:'short',day:'numeric',month:'long'});
 
+// ---- SERVICE WORKER (auto-atualização) ----
+if('serviceWorker' in navigator) {
+  let swReloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if(swReloaded) return;
+    swReloaded = true;
+    location.reload();
+  });
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').then(reg => {
+      reg.update();
+      // Verifica nova versão sempre que a app volta a primeiro plano (útil no iPhone)
+      document.addEventListener('visibilitychange', () => {
+        if(document.visibilityState === 'visible') reg.update();
+      });
+    }).catch(e => console.warn('SW falhou:', e));
+  });
+}
+
 // ---- REFRESH ----
 async function manualRefresh() {
   const btn = document.getElementById('refreshBtn');
