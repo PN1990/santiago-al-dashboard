@@ -45,6 +45,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import TimeoutException
 import openpyxl
 import requests
 
@@ -142,26 +143,62 @@ def clicar_por_texto(driver, texto, timeout=12):
     return False
 
 # ── Login + 2FA ───────────────────────────────────────────────────────────────
+# Seletor abrangente para o campo de email/utilizador (type=text como último recurso)
+EMAIL_SELECTOR = ("input[type='email'], input[name='email'], input[name='username'], "
+                  "input[id*='email' i], input[name*='email' i], input[placeholder*='email' i], "
+                  "input[placeholder*='utilizador' i], input[type='text']")
+
+def _log_inputs(driver, contexto):
+    """Lista os campos <input> da página — essencial para afinar seletores."""
+    try:
+        infos = driver.execute_script(
+            "return Array.prototype.slice.call(document.querySelectorAll('input'))"
+            ".map(function(i){return {type:i.type,name:i.name,id:i.id,ph:i.placeholder,ac:i.autocomplete};});")
+        log(f"Inputs em [{contexto}] ({len(infos)}): {infos}")
+        frames = driver.find_elements(By.TAG_NAME, "iframe")
+        if frames:
+            log(f"⚠️ A página tem {len(frames)} iframe(s) — o formulário pode estar lá dentro.")
+    except Exception as e:
+        log(f"Não consegui listar inputs: {e}")
+
+def _tem_texto(driver, texto):
+    try:
+        return texto.lower() in driver.page_source.lower()
+    except Exception:
+        return False
+
 def fazer_login(driver):
     log(f"A abrir login da Talkguest: {LOGIN_URL}")
     driver.get(LOGIN_URL)
-    esperar(2, 4)
-    wait = WebDriverWait(driver, 20)
+    esperar(3, 5)
+    driver.save_screenshot("/tmp/tg_0_login.png")
+    log(f"URL: {driver.current_url} | título: {driver.title}")
+    _log_inputs(driver, "página de login")
+    wait = WebDriverWait(driver, 25)
 
-    log("A preencher email...")
-    campo_email = wait.until(EC.presence_of_element_located((
-        By.CSS_SELECTOR,
-        "input[type='email'], input[name='email'], input[name='username'], input[placeholder*='email' i]")))
+    log("A localizar campo de email...")
+    try:
+        campo_email = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, EMAIL_SELECTOR)))
+    except TimeoutException:
+        driver.save_screenshot("/tmp/tg_0b_sem_campo_email.png")
+        log("HTML (excerto): " + driver.page_source[:1500])
+        raise Exception("Campo de email não encontrado na página de login. Ver tg_0_login.png e o log de inputs.")
     _digitar(campo_email, TALKGUEST_EMAIL)
     esperar(0.4, 1)
 
     log("A preencher password...")
-    campo_pass = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
-    _digitar(campo_pass, TALKGUEST_PASSWORD)
+    campos_pass = driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
+    if not campos_pass:
+        # login em 2 passos: submeter email primeiro, password aparece a seguir
+        driver.save_screenshot("/tmp/tg_0c_sem_password.png")
+        if not clicar_por_texto(driver, "Continuar") and not clicar_por_texto(driver, "Seguinte"):
+            campo_email.send_keys(Keys.RETURN)
+        esperar(2, 3)
+        campos_pass = [WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']")))]
+    _digitar(campos_pass[0], TALKGUEST_PASSWORD)
     esperar(0.5, 1.2)
-
     driver.save_screenshot("/tmp/tg_1_login.png")
-    inicio_login = datetime.now(timezone.utc)
 
     log("A submeter login...")
     if not clicar_por_texto(driver, "Entrar") and not clicar_por_texto(driver, "Login"):
@@ -174,49 +211,96 @@ def fazer_login(driver):
                 except Exception:
                     continue
         else:
-            campo_pass.send_keys(Keys.RETURN)
-    esperar(3, 5)
+            campos_pass[0].send_keys(Keys.RETURN)
+    esperar(4, 6)
     driver.save_screenshot("/tmp/tg_2_apos_login.png")
     log(f"URL após login: {driver.current_url}")
 
-    # 2FA?
+    # ── 2FA ──
     if precisa_2fa(driver):
-        log("Pedido de 2FA detetado. A ler código do Gmail...")
-        codigo = ler_codigo_2fa(inicio_login)
-        log(f"Código 2FA obtido: {codigo}")
-        submeter_2fa(driver, codigo)
-        esperar(3, 5)
-        driver.save_screenshot("/tmp/tg_3_apos_2fa.png")
+        tratar_2fa(driver)
 
-    if "login" in driver.current_url.lower():
-        log("HTML da página (debug): " + driver.page_source[:600])
-        raise Exception("Login falhou (ainda na página de login). Ver screenshots de debug.")
+    if "login" in driver.current_url.lower() or precisa_2fa(driver):
+        driver.save_screenshot("/tmp/tg_erro_final.png")
+        log("HTML (excerto): " + driver.page_source[:1000])
+        raise Exception("Login/2FA falhou. Ver screenshots de debug.")
     log(f"Login OK -- URL: {driver.current_url}")
 
 def precisa_2fa(driver):
-    """Deteta se a página está a pedir um código de verificação."""
+    """Deteta o ecrã de autenticação multi-fator (escolha de método ou código)."""
     try:
-        # inputs típicos de código
+        txt = driver.page_source.lower()
+        marcadores = ["multi-fator", "multifator", "multi-factor", "enviar código", "enviar codigo",
+                      "código de verificação", "codigo de verificacao", "verification code",
+                      "confirmar a sua identidade", "autenticação", "two-factor", "two factor", "2fa"]
+        if any(m in txt for m in marcadores):
+            return True
         campos = driver.find_elements(
             By.CSS_SELECTOR,
-            "input[name*='code' i], input[name*='otp' i], input[name*='token' i], "
+            "input[name*='code' i], input[name*='otp' i], "
             "input[autocomplete='one-time-code'], input[inputmode='numeric']")
-        if campos:
-            return True
-        txt = driver.page_source.lower()
-        marcadores = ["código de verificação", "codigo de verificacao", "verification code",
-                      "autenticação de dois", "two-factor", "two factor", "2fa"]
-        return any(m in txt for m in marcadores)
+        return bool(campos)
     except Exception:
         return False
 
-def submeter_2fa(driver, codigo):
+def tratar_2fa(driver):
+    """Fluxo 2FA da Talkguest: escolher 'Email' -> 'Enviar código' -> inserir código."""
+    log("Ecrã de 2FA detetado.")
+    driver.save_screenshot("/tmp/tg_3_2fa_metodo.png")
+    inicio = datetime.now(timezone.utc)
+
+    # Passo A: ecrã de escolha de método (SMS / Email / Auth App) + botão "Enviar código"
+    if _tem_texto(driver, "Enviar código") or _tem_texto(driver, "Enviar codigo"):
+        log("A escolher método 'Email'...")
+        _escolher_email_2fa(driver)
+        esperar(0.5, 1.2)
+        driver.save_screenshot("/tmp/tg_3b_email_escolhido.png")
+        inicio = datetime.now(timezone.utc)
+        log("A clicar 'Enviar código'...")
+        if not clicar_por_texto(driver, "Enviar código"):
+            clicar_por_texto(driver, "Enviar codigo")
+        esperar(5, 7)  # dar tempo ao email de chegar
+        driver.save_screenshot("/tmp/tg_3c_codigo_enviado.png")
+
+    # Passo B: ler o código do email e inseri-lo
+    log("A ler código do email...")
+    codigo = ler_codigo_2fa(inicio)
+    log(f"Código 2FA obtido: {codigo}")
+    esperar(0.5, 1)
+    inserir_codigo_2fa(driver, codigo)
+    esperar(3, 5)
+    driver.save_screenshot("/tmp/tg_4_apos_2fa.png")
+
+def _escolher_email_2fa(driver):
+    """Seleciona a opção 'Email' no ecrã de escolha de método 2FA."""
+    ok = driver.execute_script("""
+        function clickRadioFor(el){
+            var r = el.querySelector && el.querySelector('input[type=radio]');
+            if(!r){ var p = el.closest('label,li,div'); if(p){ r = p.querySelector('input[type=radio]'); } }
+            (r || el).click();
+        }
+        var els = Array.prototype.slice.call(document.querySelectorAll('label,div,span,li,button'));
+        for (var i=0;i<els.length;i++){
+            if (els[i].textContent.trim().toLowerCase() === 'email'){ clickRadioFor(els[i]); return true; }
+        }
+        var radios = document.querySelectorAll('input[type=radio]');
+        if (radios.length >= 2){ radios[1].click(); return true; }  // ordem esperada: SMS, Email, Auth App
+        if (radios.length === 1){ radios[0].click(); return true; }
+        return false;
+    """)
+    log(f"Escolha de 'Email' no 2FA: {'ok' if ok else 'rádio não encontrado'}")
+    return ok
+
+def inserir_codigo_2fa(driver, codigo):
     campos = driver.find_elements(
         By.CSS_SELECTOR,
         "input[name*='code' i], input[name*='otp' i], input[name*='token' i], "
-        "input[autocomplete='one-time-code'], input[inputmode='numeric'], input[type='text']")
+        "input[autocomplete='one-time-code'], input[inputmode='numeric']")
     if not campos:
-        raise Exception("Campo de 2FA não encontrado.")
+        campos = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input:not([type])")
+    if not campos:
+        driver.save_screenshot("/tmp/tg_erro_codigo.png")
+        raise Exception("Campo para inserir o código 2FA não encontrado.")
     if len(campos) >= len(codigo) and len(campos) >= 4:
         # um input por dígito
         for c, ch in zip(campos, codigo):
@@ -225,8 +309,8 @@ def submeter_2fa(driver, codigo):
     else:
         _digitar(campos[0], codigo)
     esperar(0.5, 1.2)
-    if not clicar_por_texto(driver, "Verificar") and not clicar_por_texto(driver, "Confirmar") \
-       and not clicar_por_texto(driver, "Entrar"):
+    if not clicar_por_texto(driver, "Confirmar") and not clicar_por_texto(driver, "Verificar") \
+       and not clicar_por_texto(driver, "Validar") and not clicar_por_texto(driver, "Entrar"):
         campos[0].send_keys(Keys.RETURN)
 
 def _texto_email(msg):
