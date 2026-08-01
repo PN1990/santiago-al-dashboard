@@ -1,8 +1,8 @@
 name: Importar Reservas Talkguest
 
-# Por agora só corre manualmente (botão "Run workflow"). O agendamento
-# diário será reativado quando o bot estiver validado.
 on:
+  schedule:
+    - cron: '0 7 * * *'   # todos os dias às 7h UTC (8h em Portugal no verão)
   workflow_dispatch:
 
 jobs:
