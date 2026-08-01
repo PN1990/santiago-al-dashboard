@@ -377,12 +377,14 @@
     <button class="refresh-btn" id="refreshBtn" onclick="manualRefresh()" title="Atualizar dados">↻</button>
     <button class="refresh-btn" onclick="clearToken();location.reload()" title="Sair">⎋</button>
     <label class="upload-btn" for="fileInput">
-      ↑ Importar Excel
+      ↑ Importar
     </label>
     <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
 
   </div>
 </header>
+
+<div id="importInfo" style="display:none;text-align:center;font-family:'DM Mono',monospace;font-size:0.66rem;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--border)"></div>
 
 <div class="tabs">
   <div class="tab active" onclick="switchTab('reservas')">Reservas</div>
@@ -543,10 +545,26 @@ document.getElementById('loginPassword').addEventListener('keydown', (e) => { if
 if (getToken()) hideLogin(); else showLogin();
 
 let DATA = [];
+let META = {};
 let activeFilter = 'todos';
 let sortKey = 'checkin';
 let sortDir = 1;
 let charts = {};
+
+// ---- INFO DE IMPORTAÇÃO (auto/manual + data/hora) ----
+function renderImportInfo() {
+  const el = document.getElementById('importInfo');
+  if(!el) return;
+  const at = META.last_import_at;
+  if(!at) { el.style.display = 'none'; return; }
+  const d = new Date(at);
+  const quando = d.toLocaleString('pt-PT', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
+  const src = META.last_import_source;
+  const origem = src === 'bot' ? '🤖 automática' : src === 'manual' ? '✋ manual' : '—';
+  const n = META.last_import_count ? ` · ${META.last_import_count} reservas` : '';
+  el.textContent = `Última importação: ${origem} · ${quando}${n}`;
+  el.style.display = '';
+}
 
 // ---- HELPERS ----
 const eur = v => '€' + Number(v).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
@@ -590,10 +608,12 @@ function aptDot(alojamento) {
 async function loadData() {
   if (!getToken()) return;
   try {
-    const { data } = await apiFetch('/api/reservas');
-    DATA = data || [];
+    const resp = await apiFetch('/api/reservas');
+    DATA = resp.data || [];
+    META = resp.meta || {};
     document.getElementById('statusDot').style.background = 'var(--green)';
     document.getElementById('statusDot').style.boxShadow = '0 0 6px var(--green)';
+    renderImportInfo();
     renderAll();
   } catch (e) {
     console.error(e);
