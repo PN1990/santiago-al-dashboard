@@ -1,0 +1,48 @@
+name: Importar Reservas Talkguest
+
+# Por agora só corre manualmente (botão "Run workflow"). O agendamento
+# diário será reativado quando o bot estiver validado.
+on:
+  workflow_dispatch:
+
+jobs:
+  importar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Instalar ChromeDriver
+        uses: nanasess/setup-chromedriver@v2
+
+      - name: Instalar dependências Python
+        run: pip install selenium openpyxl requests
+
+      - name: Correr bot de importação
+        env:
+          TALKGUEST_EMAIL:    ${{ secrets.TALKGUEST_EMAIL }}
+          TALKGUEST_PASSWORD: ${{ secrets.TALKGUEST_PASSWORD }}
+          API_URL:            ${{ secrets.API_URL }}
+          BOT_SECRET:         ${{ secrets.BOT_SECRET }}
+          MAIL_2FA_ADDRESS:   ${{ secrets.MAIL_2FA_ADDRESS }}
+          MAIL_2FA_PASSWORD:  ${{ secrets.MAIL_2FA_PASSWORD }}
+          MAIL_2FA_IMAP_HOST: ${{ secrets.MAIL_2FA_IMAP_HOST }}
+          MAIL_2FA_FOLDER:    ${{ secrets.MAIL_2FA_FOLDER }}
+        run: python talkguest_import.py
+
+      - name: Upload screenshots de debug (sempre)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: /tmp/tg_*.png
+          if-no-files-found: ignore
