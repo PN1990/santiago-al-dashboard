@@ -442,43 +442,42 @@ def _definir_periodo_checkout(driver):
     fim = hoje + timedelta(days=364)  # janela de 1 ano (inclusive)
     valor = f"{hoje.strftime('%d/%m/%Y')} - {fim.strftime('%d/%m/%Y')}"
     log(f"A definir período de check-out: {valor}")
-    xpaths = [
-        "//*[normalize-space(text())='CHECKOUT']/following::input[1]",
-        "//*[normalize-space(text())='Checkout']/following::input[1]",
-        "//*[contains(translate(normalize-space(text()),'CHECKOUT','checkout'),'checkout')]/following::input[1]",
-    ]
+    # Campo de FILTRO exato (evita os campos 'Checkout' do modal 'Nova Reserva').
     campo = None
-    for xp in xpaths:
-        els = driver.find_elements(By.XPATH, xp)
+    for css in ["input[id$='wtFilters2_block_wtCheckout']",
+                "input[id$='_block_wtCheckout']",
+                "input[name$='$wtFilters2$block$wtCheckout']"]:
+        els = driver.find_elements(By.CSS_SELECTOR, css)
         if els:
             campo = els[0]
-            log(f"Campo de check-out encontrado via {xp}")
+            log(f"Campo de filtro check-out via {css}")
             break
     if campo is None:
-        log("⚠️ Campo de período de check-out não encontrado.")
+        log("⚠️ Campo de filtro check-out não encontrado.")
         return False
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", campo)
         campo.click()
-        esperar(0.5, 1)
+        esperar(0.8, 1.5)  # deixar abrir o date-picker
     except Exception:
         pass
     try:
         campo.send_keys(valor)
-        esperar(0.4, 0.9)
+        esperar(0.5, 1)
         campo.send_keys(Keys.ENTER)
     except Exception as e:
         log(f"(aviso) send_keys no período falhou: {e}")
-    # reforço: definir valor + eventos via JS (caso o input não aceite send_keys)
+    # reforço: valor + eventos via JS (OutSystems ouve o change → aplica o filtro)
     try:
         driver.execute_script(
             "arguments[0].value=arguments[1];"
             "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
-            "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
+            "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));"
+            "arguments[0].dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));",
             campo, valor)
     except Exception:
         pass
-    esperar(1, 2)
+    esperar(1.5, 2.5)
     return True
 
 def _aplicar_pesquisa(driver):
