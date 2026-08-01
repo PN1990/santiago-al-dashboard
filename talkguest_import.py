@@ -336,14 +336,23 @@ def inserir_codigo_2fa(driver, codigo):
             time.sleep(random.uniform(0.05, 0.15))
     else:
         _por(alvo[0], codigo)
-    esperar(0.5, 1.2)
+    esperar(1.5, 2.5)  # o widget de código costuma auto-submeter ao 6º dígito
     driver.save_screenshot("/tmp/tg_3d_codigo_inserido.png")
 
-    for txt in ["Submeter", "Confirmar", "Verificar", "Validar", "Entrar",
-                "Submit", "Confirm", "Verify", "Continue"]:
-        if clicar_por_texto(driver, txt, timeout=4):
-            return
-    alvo[-1].send_keys(Keys.RETURN)
+    # Só clicar "Submeter" se ainda estivermos no ecrã do código (senão já entrou).
+    try:
+        if precisa_2fa(driver):
+            for txt in ["Submeter", "Confirmar", "Verificar", "Validar",
+                        "Submit", "Confirm", "Verify"]:
+                if clicar_por_texto(driver, txt, timeout=3):
+                    break
+            else:
+                try:
+                    alvo[-1].send_keys(Keys.RETURN)
+                except Exception:
+                    pass
+    except Exception as e:
+        log(f"(aviso) na submissão do código: {e}")
 
 def _texto_email(msg):
     partes = []
