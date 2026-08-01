@@ -37,7 +37,7 @@ import tempfile
 import imaplib
 import email
 from email.utils import parsedate_to_datetime
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -436,6 +436,66 @@ def ler_codigo_2fa(desde_utc, timeout=150):
     raise Exception("Código 2FA não encontrado no email dentro do tempo limite.")
 
 # ── Navegação + exportação ────────────────────────────────────────────────────
+def _definir_periodo_checkout(driver):
+    """Preenche o filtro de Check-out com o intervalo hoje → +1 ano (máx exigido)."""
+    hoje = date.today()
+    fim = hoje + timedelta(days=364)  # janela de 1 ano (inclusive)
+    valor = f"{hoje.strftime('%d/%m/%Y')} - {fim.strftime('%d/%m/%Y')}"
+    log(f"A definir período de check-out: {valor}")
+    xpaths = [
+        "//*[normalize-space(text())='CHECKOUT']/following::input[1]",
+        "//*[normalize-space(text())='Checkout']/following::input[1]",
+        "//*[contains(translate(normalize-space(text()),'CHECKOUT','checkout'),'checkout')]/following::input[1]",
+    ]
+    campo = None
+    for xp in xpaths:
+        els = driver.find_elements(By.XPATH, xp)
+        if els:
+            campo = els[0]
+            log(f"Campo de check-out encontrado via {xp}")
+            break
+    if campo is None:
+        log("⚠️ Campo de período de check-out não encontrado.")
+        return False
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", campo)
+        campo.click()
+        esperar(0.5, 1)
+    except Exception:
+        pass
+    try:
+        campo.send_keys(valor)
+        esperar(0.4, 0.9)
+        campo.send_keys(Keys.ENTER)
+    except Exception as e:
+        log(f"(aviso) send_keys no período falhou: {e}")
+    # reforço: definir valor + eventos via JS (caso o input não aceite send_keys)
+    try:
+        driver.execute_script(
+            "arguments[0].value=arguments[1];"
+            "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+            "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
+            campo, valor)
+    except Exception:
+        pass
+    esperar(1, 2)
+    return True
+
+def _aplicar_pesquisa(driver):
+    """Carrega no botão de pesquisa (lupa) para aplicar os filtros."""
+    seletores = ["[title*='esquis' i]", "[aria-label*='esquis' i]",
+                 "i.fa-search", "span.fa-search", "button.search", "button[type='submit']"]
+    for sel in seletores:
+        for e in driver.find_elements(By.CSS_SELECTOR, sel):
+            try:
+                if e.is_displayed():
+                    driver.execute_script("arguments[0].click();", e)
+                    log(f"Filtros aplicados via {sel}")
+                    return True
+            except Exception:
+                continue
+    return False
+
 def descarregar_excel(driver, download_dir):
     log("A navegar para a Lista de Reservas...")
     # Tenta clicar diretamente em "Lista de Reservas"; se não estiver visível,
@@ -446,6 +506,14 @@ def descarregar_excel(driver, download_dir):
         clicar_por_texto(driver, "Lista de Reservas")
     esperar(2.5, 3.5)
     driver.save_screenshot("/tmp/tg_4_lista.png")
+
+    # Definir o período de check-out (a exportação exige um intervalo até 1 ano).
+    _log_inputs(driver, "filtros da lista")
+    _definir_periodo_checkout(driver)
+    driver.save_screenshot("/tmp/tg_4b_periodo.png")
+    _aplicar_pesquisa(driver)
+    esperar(2, 3)
+    driver.save_screenshot("/tmp/tg_4c_filtrado.png")
 
     log("A abrir menu 'Ações'...")
     if not clicar_por_texto(driver, "Ações"):
