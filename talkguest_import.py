@@ -308,27 +308,42 @@ def _escolher_email_2fa(driver):
     return ok
 
 def inserir_codigo_2fa(driver, codigo):
-    campos = driver.find_elements(
-        By.CSS_SELECTOR,
-        "input[name*='code' i], input[name*='otp' i], input[name*='token' i], "
-        "input[autocomplete='one-time-code'], input[inputmode='numeric']")
-    if not campos:
-        campos = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input:not([type])")
-    if not campos:
+    _log_inputs(driver, "ecrã de código 2FA")
+    # Só caixas de texto/número visíveis e editáveis (ignora hidden/checkbox/submit).
+    editaveis = []
+    for e in driver.find_elements(By.CSS_SELECTOR, "input"):
+        t = (e.get_attribute("type") or "text").lower()
+        if t in ("text", "tel", "number", "password", "") and e.is_displayed() and e.is_enabled():
+            editaveis.append(e)
+    # Preferir caixas de 1 dígito (maxlength=1), típicas do ecrã "Inserir Código".
+    por_digito = [e for e in editaveis if (e.get_attribute("maxlength") == "1")]
+    alvo = por_digito if len(por_digito) >= len(codigo) else editaveis
+    if not alvo:
         driver.save_screenshot("/tmp/tg_erro_codigo.png")
         raise Exception("Campo para inserir o código 2FA não encontrado.")
-    if len(campos) >= len(codigo) and len(campos) >= 4:
-        # um input por dígito
-        for c, ch in zip(campos, codigo):
-            c.send_keys(ch)
+
+    def _por(e, txt):
+        try:
+            e.clear()
+        except Exception:
+            pass  # OutSystems: alguns inputs não suportam clear()
+        e.send_keys(txt)
+
+    if len(alvo) >= len(codigo):
+        # uma caixa por dígito
+        for e, ch in zip(alvo, codigo):
+            _por(e, ch)
             time.sleep(random.uniform(0.05, 0.15))
     else:
-        _digitar(campos[0], codigo)
+        _por(alvo[0], codigo)
     esperar(0.5, 1.2)
-    for txt in ["Confirmar", "Verificar", "Validar", "Entrar", "Confirm", "Verify", "Submit", "Continue"]:
+    driver.save_screenshot("/tmp/tg_3d_codigo_inserido.png")
+
+    for txt in ["Submeter", "Confirmar", "Verificar", "Validar", "Entrar",
+                "Submit", "Confirm", "Verify", "Continue"]:
         if clicar_por_texto(driver, txt, timeout=4):
             return
-    campos[0].send_keys(Keys.RETURN)
+    alvo[-1].send_keys(Keys.RETURN)
 
 def _texto_email(msg):
     partes = []
