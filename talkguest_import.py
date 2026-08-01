@@ -62,7 +62,7 @@ MAIL_2FA_IMAP_HOST = os.environ.get("MAIL_2FA_IMAP_HOST", "").strip() or "imap.g
 MAIL_2FA_FOLDER    = os.environ.get("MAIL_2FA_FOLDER", "").strip() or "INBOX"
 
 # ── Parâmetros afináveis ──────────────────────────────────────────────────────
-LOGIN_URL          = os.environ.get("TALKGUEST_LOGIN_URL", "https://app.talkguest.com/")
+LOGIN_URL          = os.environ.get("TALKGUEST_LOGIN_URL", "https://app.talkguest.com/Theme_UI/Login.aspx")
 # Remetente(s) esperado(s) do email de 2FA (match parcial, minúsculas)
 TWOFA_FROM_HINTS   = ["talkguest"]
 # Regex do código 2FA no corpo do email (default: 6 dígitos)
@@ -86,6 +86,7 @@ def criar_driver():
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--window-size=1400,1000")
+    opts.add_argument("--lang=pt-PT")  # forçar a Talkguest a mostrar-se em português
     opts.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
     download_dir = tempfile.mkdtemp()
@@ -94,6 +95,7 @@ def criar_driver():
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
         "safebrowsing.enabled": True,
+        "intl.accept_languages": "pt-PT,pt",
     }
     opts.add_experimental_option("prefs", prefs)
     driver = webdriver.Chrome(options=opts)
@@ -201,18 +203,22 @@ def fazer_login(driver):
     driver.save_screenshot("/tmp/tg_1_login.png")
 
     log("A submeter login...")
-    if not clicar_por_texto(driver, "Entrar") and not clicar_por_texto(driver, "Login"):
-        for sel in ["button[type='submit']", "input[type='submit']", "form button"]:
-            els = driver.find_elements(By.CSS_SELECTOR, sel)
-            if els:
-                try:
-                    els[-1].click()
-                    break
-                except Exception:
-                    continue
-        else:
-            campos_pass[0].send_keys(Keys.RETURN)
-    esperar(4, 6)
+    # Clicar no BOTÃO de submit real (não no texto "Login", que também é o título).
+    submetido = False
+    for sel in ["input[type='submit']", "button[type='submit']",
+                "input[type='button'][value*='ogin' i]", "form button"]:
+        els = driver.find_elements(By.CSS_SELECTOR, sel)
+        if els:
+            try:
+                driver.execute_script("arguments[0].click();", els[-1])
+                log(f"Login submetido via {sel}")
+                submetido = True
+                break
+            except Exception:
+                continue
+    if not submetido:
+        campos_pass[0].send_keys(Keys.RETURN)
+    esperar(5, 7)
     driver.save_screenshot("/tmp/tg_2_apos_login.png")
     log(f"URL após login: {driver.current_url}")
 
@@ -231,8 +237,9 @@ def precisa_2fa(driver):
     try:
         txt = driver.page_source.lower()
         marcadores = ["multi-fator", "multifator", "multi-factor", "enviar código", "enviar codigo",
-                      "código de verificação", "codigo de verificacao", "verification code",
-                      "confirmar a sua identidade", "autenticação", "two-factor", "two factor", "2fa"]
+                      "send code", "código de verificação", "codigo de verificacao",
+                      "verification code", "confirmar a sua identidade", "confirm your identity",
+                      "autenticação", "authentication", "two-factor", "two factor", "2fa"]
         if any(m in txt for m in marcadores):
             return True
         campos = driver.find_elements(
@@ -250,15 +257,15 @@ def tratar_2fa(driver):
     inicio = datetime.now(timezone.utc)
 
     # Passo A: ecrã de escolha de método (SMS / Email / Auth App) + botão "Enviar código"
-    if _tem_texto(driver, "Enviar código") or _tem_texto(driver, "Enviar codigo"):
+    if _tem_texto(driver, "Enviar código") or _tem_texto(driver, "Enviar codigo") or _tem_texto(driver, "Send code"):
         log("A escolher método 'Email'...")
         _escolher_email_2fa(driver)
         esperar(0.5, 1.2)
         driver.save_screenshot("/tmp/tg_3b_email_escolhido.png")
         inicio = datetime.now(timezone.utc)
         log("A clicar 'Enviar código'...")
-        if not clicar_por_texto(driver, "Enviar código"):
-            clicar_por_texto(driver, "Enviar codigo")
+        if not clicar_por_texto(driver, "Enviar código") and not clicar_por_texto(driver, "Enviar codigo"):
+            clicar_por_texto(driver, "Send code")
         esperar(5, 7)  # dar tempo ao email de chegar
         driver.save_screenshot("/tmp/tg_3c_codigo_enviado.png")
 
@@ -309,9 +316,10 @@ def inserir_codigo_2fa(driver, codigo):
     else:
         _digitar(campos[0], codigo)
     esperar(0.5, 1.2)
-    if not clicar_por_texto(driver, "Confirmar") and not clicar_por_texto(driver, "Verificar") \
-       and not clicar_por_texto(driver, "Validar") and not clicar_por_texto(driver, "Entrar"):
-        campos[0].send_keys(Keys.RETURN)
+    for txt in ["Confirmar", "Verificar", "Validar", "Entrar", "Confirm", "Verify", "Submit", "Continue"]:
+        if clicar_por_texto(driver, txt, timeout=4):
+            return
+    campos[0].send_keys(Keys.RETURN)
 
 def _texto_email(msg):
     partes = []
