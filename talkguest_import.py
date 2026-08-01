@@ -295,31 +295,32 @@ def ler_codigo_2fa(desde_utc, timeout=150):
 
 # ── Navegação + exportação ────────────────────────────────────────────────────
 def descarregar_excel(driver, download_dir):
-    log("A navegar para Reservas -> Lista de Reservas...")
-    clicar_por_texto(driver, "Reservas")
-    esperar(1.5, 2.5)
-    clicar_por_texto(driver, "Lista de Reservas")
-    esperar(2, 3)
+    log("A navegar para a Lista de Reservas...")
+    # Tenta clicar diretamente em "Lista de Reservas"; se não estiver visível,
+    # expande primeiro o menu "Reservas".
+    if not clicar_por_texto(driver, "Lista de Reservas"):
+        clicar_por_texto(driver, "Reservas")
+        esperar(1.5, 2.5)
+        clicar_por_texto(driver, "Lista de Reservas")
+    esperar(2.5, 3.5)
     driver.save_screenshot("/tmp/tg_4_lista.png")
 
     log("A abrir menu 'Ações'...")
-    clicar_por_texto(driver, "Ações")
+    if not clicar_por_texto(driver, "Ações"):
+        clicar_por_texto(driver, "Acções")  # variação ortográfica
     esperar(1, 2)
     driver.save_screenshot("/tmp/tg_5_acoes.png")
 
-    log("A clicar em 'Exportar'...")
-    if not clicar_por_texto(driver, "Exportar"):
+    # A opção certa é "Exportar Reservas" (NÃO "Exportar Valores de Reservas").
+    log("A clicar em 'Exportar Reservas'...")
+    if not clicar_por_texto(driver, "Exportar Reservas"):
         driver.save_screenshot("/tmp/tg_debug.png")
-        raise Exception("Opção 'Exportar' não encontrada. Ver screenshots de debug.")
+        raise Exception("Opção 'Exportar Reservas' não encontrada. Ver screenshots de debug.")
     esperar(2, 3)
-    # possível modal com escolha de formato — tentar Excel/XLSX
-    for fmt in ["Excel", "XLSX", "xlsx", "Exportar"]:
-        if clicar_por_texto(driver, fmt, timeout=4):
-            break
     driver.save_screenshot("/tmp/tg_6_exportar.png")
 
     log("A aguardar download do XLSX...")
-    ficheiro = esperar_download(download_dir, timeout=60)
+    ficheiro = esperar_download(download_dir, timeout=90)
     log(f"XLSX descarregado: {ficheiro}")
     return ficheiro
 
