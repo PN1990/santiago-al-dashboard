@@ -244,11 +244,17 @@ def fazer_login(driver):
 def precisa_2fa(driver):
     """Deteta o ecrã de autenticação multi-fator (escolha de método ou código)."""
     try:
+        # O 2FA acontece sempre na página de login (Login.aspx). Se já estamos
+        # no dashboard, NÃO há 2FA pendente — evita falsos positivos por palavras
+        # genéricas que também aparecem no dashboard.
+        if 'login' not in driver.current_url.lower():
+            return False
         txt = driver.page_source.lower()
-        marcadores = ["multi-fator", "multifator", "multi-factor", "enviar código", "enviar codigo",
-                      "send code", "código de verificação", "codigo de verificacao",
-                      "verification code", "confirmar a sua identidade", "confirm your identity",
-                      "autenticação", "authentication", "two-factor", "two factor", "2fa"]
+        marcadores = ["multi-fator", "multifator", "multi-factor",
+                      "enviar código", "enviar codigo", "send code",
+                      "inserir código", "inserir codigo",
+                      "código de verificação", "codigo de verificacao", "verification code",
+                      "confirmar a sua identidade", "confirm your identity"]
         if any(m in txt for m in marcadores):
             return True
         campos = driver.find_elements(
