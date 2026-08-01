@@ -62,7 +62,7 @@ MAIL_2FA_IMAP_HOST = os.environ.get("MAIL_2FA_IMAP_HOST", "").strip() or "imap.g
 MAIL_2FA_FOLDER    = os.environ.get("MAIL_2FA_FOLDER", "").strip() or "INBOX"
 
 # ── Parâmetros afináveis ──────────────────────────────────────────────────────
-LOGIN_URL          = os.environ.get("TALKGUEST_LOGIN_URL", "https://app.talkguest.com/login")
+LOGIN_URL          = os.environ.get("TALKGUEST_LOGIN_URL", "https://app.talkguest.com/")
 # Remetente(s) esperado(s) do email de 2FA (match parcial, minúsculas)
 TWOFA_FROM_HINTS   = ["talkguest"]
 # Regex do código 2FA no corpo do email (default: 6 dígitos)
