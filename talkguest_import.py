@@ -20,6 +20,8 @@ Secrets necessários (GitHub Actions):
   MAIL_2FA_PASSWORD    App Password / password IMAP dessa caixa (só se houver 2FA)
   MAIL_2FA_IMAP_HOST   (opcional) servidor IMAP; default imap.gmail.com
                        (Outlook: outlook.office365.com · iCloud: imap.mail.me.com)
+  MAIL_2FA_FOLDER      (opcional) pasta/label IMAP a ler; default INBOX
+                       (define para uma label dedicada se criares um filtro)
 
 NOTA: os seletores de login/2FA/exportação são "best-effort" porque foram
 escritos sem acesso ao DOM real da Talkguest. A primeira execução gera
@@ -54,6 +56,9 @@ BOT_SECRET         = os.environ["BOT_SECRET"]
 MAIL_2FA_ADDRESS   = os.environ.get("MAIL_2FA_ADDRESS", "")
 MAIL_2FA_PASSWORD  = os.environ.get("MAIL_2FA_PASSWORD", "")
 MAIL_2FA_IMAP_HOST = os.environ.get("MAIL_2FA_IMAP_HOST", "").strip() or "imap.gmail.com"
+# Pasta/label IMAP a ler. Default INBOX; se usares um filtro com label no Gmail
+# (ex: "talkguest-2fa"), define MAIL_2FA_FOLDER com esse nome para leitura robusta.
+MAIL_2FA_FOLDER    = os.environ.get("MAIL_2FA_FOLDER", "").strip() or "INBOX"
 
 # ── Parâmetros afináveis ──────────────────────────────────────────────────────
 LOGIN_URL          = os.environ.get("TALKGUEST_LOGIN_URL", "https://app.talkguest.com/login")
@@ -61,6 +66,10 @@ LOGIN_URL          = os.environ.get("TALKGUEST_LOGIN_URL", "https://app.talkgues
 TWOFA_FROM_HINTS   = ["talkguest"]
 # Regex do código 2FA no corpo do email (default: 6 dígitos)
 TWOFA_CODE_REGEX   = re.compile(r"\b(\d{6})\b")
+# Palavras que indicam que o email é mesmo de verificação (preferência no match)
+TWOFA_KEYWORDS     = ["código", "codigo", "code", "verificação", "verificacao",
+                      "verification", "autenticação", "autenticacao", "one-time",
+                      "one time", "otp", "2fa"]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def esperar(min_s=1.5, max_s=3.5):
@@ -245,11 +254,12 @@ def ler_codigo_2fa(desde_utc, timeout=150):
         raise Exception("MAIL_2FA_ADDRESS/MAIL_2FA_PASSWORD não definidos, mas a Talkguest pediu 2FA.")
     deadline = time.time() + timeout
     margem = 60  # segundos de tolerância antes do início do login
+    fallback = None  # código de um email da Talkguest sem palavras de verificação
     while time.time() < deadline:
         try:
             M = imaplib.IMAP4_SSL(MAIL_2FA_IMAP_HOST)
             M.login(MAIL_2FA_ADDRESS, MAIL_2FA_PASSWORD)
-            M.select("INBOX")
+            M.select(f'"{MAIL_2FA_FOLDER}"')
             typ, data = M.search(None, "ALL")
             ids = data[0].split()
             for msg_id in reversed(ids[-25:]):
@@ -267,14 +277,21 @@ def ler_codigo_2fa(desde_utc, timeout=150):
                     pass
                 corpo = (msg.get("Subject") or "") + "\n" + _texto_email(msg)
                 m = TWOFA_CODE_REGEX.search(corpo)
-                if m:
+                if not m:
+                    continue
+                if any(k in corpo.lower() for k in TWOFA_KEYWORDS):
                     M.logout()
-                    return m.group(1)
+                    return m.group(1)  # email claramente de verificação
+                if fallback is None:
+                    fallback = m.group(1)
             M.logout()
         except Exception as e:
             log(f"Erro IMAP (retry): {e}")
         esperar(6, 9)
-    raise Exception("Código 2FA não encontrado no Gmail dentro do tempo limite.")
+    if fallback:
+        log("Sem email com palavra de verificação; a usar código de fallback.")
+        return fallback
+    raise Exception("Código 2FA não encontrado no email dentro do tempo limite.")
 
 # ── Navegação + exportação ────────────────────────────────────────────────────
 def descarregar_excel(driver, download_dir):

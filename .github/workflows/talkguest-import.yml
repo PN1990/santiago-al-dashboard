@@ -36,6 +36,7 @@ jobs:
           MAIL_2FA_ADDRESS:   ${{ secrets.MAIL_2FA_ADDRESS }}
           MAIL_2FA_PASSWORD:  ${{ secrets.MAIL_2FA_PASSWORD }}
           MAIL_2FA_IMAP_HOST: ${{ secrets.MAIL_2FA_IMAP_HOST }}
+          MAIL_2FA_FOLDER:    ${{ secrets.MAIL_2FA_FOLDER }}
         run: python talkguest_import.py
 
       - name: Upload screenshots de debug (sempre)
