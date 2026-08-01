@@ -142,6 +142,30 @@ async function replaceReservas(db, incoming) {
   return merged.length;
 }
 
+// Regista quem/quando fez a última importação (origem 'bot' ou 'manual').
+async function registarImport(db, origem, count) {
+  await db.prepare('CREATE TABLE IF NOT EXISTS meta (chave TEXT PRIMARY KEY, valor TEXT)').run();
+  const upsert = (chave, valor) =>
+    db.prepare(`INSERT INTO meta (chave, valor) VALUES (?, ?)
+                ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor`).bind(chave, valor);
+  await db.batch([
+    upsert('last_import_at', new Date().toISOString()),
+    upsert('last_import_source', origem),
+    upsert('last_import_count', String(count)),
+  ]);
+}
+
+async function lerMeta(db) {
+  try {
+    const { results } = await db.prepare('SELECT chave, valor FROM meta').all();
+    const meta = {};
+    for (const row of results) meta[row.chave] = row.valor;
+    return meta;
+  } catch {
+    return {}; // tabela ainda não existe (antes da 1ª importação após deploy)
+  }
+}
+
 const ALLOWED_UPDATE_FIELDS = [
   'hora_checkin', 'hora_checkout', 'hora_checkin_manual', 'hora_checkout_manual',
   'pessoas_extra', 'custo_pessoa_extra', 'caucao_valor', 'caucao_necessaria',
@@ -179,6 +203,7 @@ export default {
           return json({ error: 'Payload inválido' }, 400);
         }
         const count = await replaceReservas(env.DB, body.reservas);
+        try { await registarImport(env.DB, 'bot', count); } catch (e) { /* não falhar o import */ }
         return json({ ok: true, count });
       }
 
@@ -189,7 +214,8 @@ export default {
 
       if (pathname === '/api/reservas' && request.method === 'GET') {
         const { results } = await env.DB.prepare('SELECT * FROM reservas ORDER BY checkin').all();
-        return json({ data: results });
+        const meta = await lerMeta(env.DB);
+        return json({ data: results, meta });
       }
 
       if (pathname === '/api/reservas/import' && request.method === 'POST') {
@@ -198,6 +224,7 @@ export default {
           return json({ error: 'Payload inválido' }, 400);
         }
         const count = await replaceReservas(env.DB, body.reservas);
+        try { await registarImport(env.DB, 'manual', count); } catch (e) { /* não falhar o import */ }
         return json({ ok: true, count });
       }
 
