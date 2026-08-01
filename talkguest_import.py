@@ -113,6 +113,8 @@ def clicar_por_texto(driver, texto, timeout=12):
         f"//*[normalize-space(text())='{texto}']",
         f"//button[contains(normalize-space(.),'{texto}')]",
         f"//a[contains(normalize-space(.),'{texto}')]",
+        f"//input[contains(@value,'{texto}')]",           # botões OutSystems (texto no value)
+        f"//button[contains(@value,'{texto}')]",
         f"//*[@title='{texto}']",
         f"//*[contains(normalize-space(text()),'{texto}')]",
     ]
@@ -129,13 +131,20 @@ def clicar_por_texto(driver, texto, timeout=12):
             return True
         except Exception:
             continue
-    # último recurso: JS por textContent exato
+    # último recurso: JS — por value (inputs/botões) e por textContent
     ok = driver.execute_script(
         """
         const alvo = arguments[0];
+        const botoes = document.querySelectorAll('input[type=submit], input[type=button], button');
+        for (const el of botoes) {
+            if ((el.value || '').trim().includes(alvo)) { el.click(); return true; }
+        }
         const els = document.querySelectorAll('button, a, div, span, li');
         for (const el of els) {
             if (el.textContent.trim() === alvo) { el.click(); return true; }
+        }
+        for (const el of els) {
+            if (el.children.length === 0 && el.textContent.trim().includes(alvo)) { el.click(); return true; }
         }
         return false;
         """, texto)
