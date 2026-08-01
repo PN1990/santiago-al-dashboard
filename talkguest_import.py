@@ -345,37 +345,54 @@ def ler_codigo_2fa(desde_utc, timeout=150):
     if not MAIL_2FA_ADDRESS or not MAIL_2FA_PASSWORD:
         raise Exception("MAIL_2FA_ADDRESS/MAIL_2FA_PASSWORD não definidos, mas a Talkguest pediu 2FA.")
     deadline = time.time() + timeout
-    margem = 60  # segundos de tolerância antes do início do login
-    fallback = None  # código de um email da Talkguest sem palavras de verificação
+    margem = 120  # segundos de tolerância antes do envio do código
+    # Lê a label configurada e, como rede de segurança, também a INBOX.
+    pastas = [MAIL_2FA_FOLDER] + (["INBOX"] if MAIL_2FA_FOLDER != "INBOX" else [])
+    fallback = None  # código de um email sem palavras de verificação (último recurso)
+    poll = 0
     while time.time() < deadline:
+        verbose = poll < 3  # diagnóstico nas primeiras rondas
+        poll += 1
         try:
             M = imaplib.IMAP4_SSL(MAIL_2FA_IMAP_HOST)
             M.login(MAIL_2FA_ADDRESS, MAIL_2FA_PASSWORD)
-            M.select(f'"{MAIL_2FA_FOLDER}"')
-            typ, data = M.search(None, "ALL")
-            ids = data[0].split()
-            for msg_id in reversed(ids[-25:]):
-                typ, msg_data = M.fetch(msg_id, "(RFC822)")
-                msg = email.message_from_bytes(msg_data[0][1])
-                remetente = (msg.get("From") or "").lower()
-                if not any(h in remetente for h in TWOFA_FROM_HINTS):
+            for pasta in pastas:
+                so_label = (pasta != "INBOX")  # numa label dedicada, tudo é 2FA
+                typ, _ = M.select(f'"{pasta}"', readonly=True)
+                if typ != "OK":
+                    if verbose:
+                        log(f"⚠️ Não consegui abrir a pasta '{pasta}' (typ={typ}).")
                     continue
-                # só emails recebidos depois do início do login
-                try:
-                    dt = parsedate_to_datetime(msg.get("Date"))
-                    if dt and dt.timestamp() < desde_utc.timestamp() - margem:
+                typ, data = M.search(None, "ALL")
+                ids = data[0].split() if data and data[0] else []
+                if verbose:
+                    log(f"Pasta '{pasta}': {len(ids)} mensagens.")
+                for msg_id in reversed(ids[-25:]):
+                    typ, msg_data = M.fetch(msg_id, "(RFC822)")
+                    msg = email.message_from_bytes(msg_data[0][1])
+                    remetente = (msg.get("From") or "")
+                    assunto = (msg.get("Subject") or "")
+                    if not so_label and not any(h in remetente.lower() for h in TWOFA_FROM_HINTS):
                         continue
-                except Exception:
-                    pass
-                corpo = (msg.get("Subject") or "") + "\n" + _texto_email(msg)
-                m = TWOFA_CODE_REGEX.search(corpo)
-                if not m:
-                    continue
-                if any(k in corpo.lower() for k in TWOFA_KEYWORDS):
-                    M.logout()
-                    return m.group(1)  # email claramente de verificação
-                if fallback is None:
-                    fallback = m.group(1)
+                    try:
+                        dt = parsedate_to_datetime(msg.get("Date"))
+                        if dt and dt.timestamp() < desde_utc.timestamp() - margem:
+                            continue
+                    except Exception:
+                        pass
+                    corpo = assunto + "\n" + _texto_email(msg)
+                    m = TWOFA_CODE_REGEX.search(corpo)
+                    if verbose:
+                        nums = re.findall(r"\d{4,8}", corpo)
+                        log(f"  msg de={remetente[:50]!r} assunto={assunto[:50]!r} "
+                            f"cod6={'sim' if m else 'nao'} nums={nums[:6]}")
+                    if not m:
+                        continue
+                    if any(k in corpo.lower() for k in TWOFA_KEYWORDS):
+                        M.logout()
+                        return m.group(1)  # email claramente de verificação
+                    if fallback is None:
+                        fallback = m.group(1)
             M.logout()
         except Exception as e:
             log(f"Erro IMAP (retry): {e}")
