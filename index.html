@@ -1398,9 +1398,11 @@ function renderSiba() {
       return `<div class="siba-row"><label>${etiqueta}</label>${input}
                 <button class="copy-btn" onclick="sibaCopiar(this,${i},'${chave}')">📋</button></div>`;
     }).join('');
+    const gravado = h.gravado_em
+      ? '<span style="color:var(--green);font-size:0.58rem;margin-left:8px">✓ gravado na Talkguest</span>' : '';
     return `<div class="siba-card">
       <div class="siba-card-top">
-        <strong>Hóspede ${i+1}</strong>
+        <strong>Hóspede ${i+1}${gravado}</strong>
         <span>
           <button class="edit-btn" onclick="sibaFotografar(${i})">📷 Ler documento</button>
           <button class="edit-btn" style="margin-left:6px" onclick="sibaApagarHospede(${i})">✕</button>

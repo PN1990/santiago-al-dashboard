@@ -182,8 +182,12 @@ async function garantirTabelaSiba(db) {
     reserva_id TEXT NOT NULL,
     ${SIBA_COLS.map((c) => `${c} TEXT`).join(', ')},
     criado_em TEXT,
-    expira_em TEXT
+    expira_em TEXT,
+    gravado_em TEXT
   )`).run();
+  // Tabelas criadas antes desta coluna existir precisam de a receber agora.
+  try { await db.prepare('ALTER TABLE siba_hospedes ADD COLUMN gravado_em TEXT').run(); }
+  catch (e) { /* já existe */ }
 }
 
 // Apaga tudo o que passou do prazo. Corre a cada pedido ao SIBA — é barato e
@@ -295,6 +299,38 @@ export default {
         const count = await replaceReservas(env.DB, body.reservas);
         try { await registarImport(env.DB, 'bot', count); } catch (e) { /* não falhar o import */ }
         return json({ ok: true, count });
+      }
+
+      // Hóspedes por gravar no SIBA da Talkguest. O bot grava-os lá (sem
+      // comunicar) e marca-os como gravados, para não os repetir na corrida
+      // seguinte — a lista da Talkguest não é idempotente.
+      if (pathname === '/api/bot/siba' && request.method === 'GET') {
+        const token = getBearer(request);
+        if (!token || token !== env.BOT_SECRET) return json({ error: 'Não autorizado' }, 401);
+        await garantirTabelaSiba(env.DB);
+        await limparSibaExpirados(env.DB);
+        const { results } = await env.DB.prepare(
+          `SELECT h.*, r.hospede AS reserva_hospede, r.alojamento, r.checkin, r.checkout
+             FROM siba_hospedes h
+             LEFT JOIN reservas r ON r.id = h.reserva_id
+            WHERE h.gravado_em IS NULL
+            ORDER BY h.reserva_id, h.criado_em`).all();
+        return json({ data: results });
+      }
+
+      if (pathname === '/api/bot/siba/gravado' && request.method === 'POST') {
+        const token = getBearer(request);
+        if (!token || token !== env.BOT_SECRET) return json({ error: 'Não autorizado' }, 401);
+        const body = await request.json().catch(() => null);
+        if (!body || !Array.isArray(body.ids) || body.ids.length === 0) {
+          return json({ error: 'Payload inválido' }, 400);
+        }
+        await garantirTabelaSiba(env.DB);
+        const marcas = body.ids.map(() => '?').join(', ');
+        await env.DB.prepare(
+          `UPDATE siba_hospedes SET gravado_em = ? WHERE id IN (${marcas})`
+        ).bind(new Date().toISOString(), ...body.ids).run();
+        return json({ ok: true, marcados: body.ids.length });
       }
 
       // ---- Everything below requires a valid session ----
