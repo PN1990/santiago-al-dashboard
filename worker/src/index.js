@@ -166,6 +166,96 @@ async function lerMeta(db) {
   }
 }
 
+// ── SIBA / Registo de Viajantes ──────────────────────────────────────────────
+// Dados de identificação dos hóspedes, guardados SÓ o tempo necessário para
+// comunicar o registo. A imagem do documento nunca é guardada — apenas os
+// campos extraídos dela. Cada linha traz o seu próprio prazo de validade e é
+// apagada automaticamente, independentemente do ciclo de vida das reservas.
+const SIBA_COLS = ['nome_completo', 'data_nascimento', 'nacionalidade', 'pais_residencia',
+  'tipo_documento', 'numero_documento', 'pais_emissor'];
+
+const SIBA_RETENCAO_DIAS_DEFAULT = 5;
+
+async function garantirTabelaSiba(db) {
+  await db.prepare(`CREATE TABLE IF NOT EXISTS siba_hospedes (
+    id TEXT PRIMARY KEY,
+    reserva_id TEXT NOT NULL,
+    ${SIBA_COLS.map((c) => `${c} TEXT`).join(', ')},
+    criado_em TEXT,
+    expira_em TEXT
+  )`).run();
+}
+
+// Apaga tudo o que passou do prazo. Corre a cada pedido ao SIBA — é barato e
+// dispensa um agendador só para isto.
+async function limparSibaExpirados(db) {
+  try {
+    await db.prepare('DELETE FROM siba_hospedes WHERE expira_em IS NOT NULL AND expira_em < ?')
+      .bind(new Date().toISOString()).run();
+  } catch (e) { /* tabela ainda não criada */ }
+}
+
+const SIBA_PROMPT = `Lês documentos de identificação (passaportes e cartões de identidade) para preencher o Registo de Viajantes (SIBA) em Portugal.
+
+Responde APENAS com um objeto JSON, sem texto à volta e sem blocos de código.
+
+Campos:
+- "nome_completo": nome completo como aparece no documento, na ordem natural (nome próprio antes do apelido). Usa capitalização normal, não tudo em maiúsculas.
+- "data_nascimento": no formato DD-MM-YYYY.
+- "nacionalidade": nome do país EM PORTUGUÊS, na forma curta e comum em Portugal (ex: "Alemanha", "Estados Unidos", "Reino Unido", "França", "Polónia", "Países Baixos", "Finlândia", "Hungria").
+- "tipo_documento": exatamente um de "Passaporte", "Cartão de Cidadão" ou "Outro". Passaportes → "Passaporte"; cartões de identidade nacionais (de qualquer país) → "Cartão de Cidadão"; tudo o resto (carta de condução, título de residência) → "Outro".
+- "numero_documento": número do documento, sem espaços.
+- "pais_emissor": país emissor EM PORTUGUÊS, mesmo critério da nacionalidade.
+- "confianca": "alta" se leste a zona de leitura ótica (MRZ) sem ambiguidade, "media" se leste do texto impresso, "baixa" se a imagem está pouco legível.
+
+Se um campo não for legível, põe null nesse campo. Nunca inventes dados.`;
+
+async function extrairDocumento(env, imagemBase64, mediaType) {
+  if (!env.ANTHROPIC_API_KEY) {
+    throw new Error('Falta o secret ANTHROPIC_API_KEY no Worker.');
+  }
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: env.ANTHROPIC_MODEL || 'claude-opus-5',
+      max_tokens: 1024,
+      output_config: { effort: 'low' },
+      system: SIBA_PROMPT,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: mediaType, data: imagemBase64 } },
+          { type: 'text', text: 'Extrai os dados deste documento.' },
+        ],
+      }],
+    }),
+  });
+
+  if (!resp.ok) {
+    const detalhe = await resp.text().catch(() => '');
+    throw new Error(`API de leitura devolveu ${resp.status}: ${detalhe.slice(0, 300)}`);
+  }
+  const data = await resp.json();
+  if (data.stop_reason === 'refusal') {
+    throw new Error('A leitura do documento foi recusada. Tenta outra fotografia.');
+  }
+  const texto = (data.content || [])
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n');
+  const inicio = texto.indexOf('{');
+  const fim = texto.lastIndexOf('}');
+  if (inicio === -1 || fim === -1) {
+    throw new Error('Não consegui ler dados nesta imagem. Tenta uma foto mais nítida.');
+  }
+  return JSON.parse(texto.slice(inicio, fim + 1));
+}
+
 const ALLOWED_UPDATE_FIELDS = [
   'hora_checkin', 'hora_checkout', 'hora_checkin_manual', 'hora_checkout_manual',
   'pessoas_extra', 'custo_pessoa_extra', 'caucao_valor', 'caucao_necessaria',
@@ -226,6 +316,66 @@ export default {
         const count = await replaceReservas(env.DB, body.reservas);
         try { await registarImport(env.DB, 'manual', count); } catch (e) { /* não falhar o import */ }
         return json({ ok: true, count });
+      }
+
+      // ---- SIBA: dados de identificação (temporários) ----
+      if (pathname === '/api/siba' && request.method === 'GET') {
+        const reservaId = url.searchParams.get('reserva_id');
+        if (!reservaId) return json({ error: 'reserva_id em falta' }, 400);
+        await garantirTabelaSiba(env.DB);
+        await limparSibaExpirados(env.DB);
+        const { results } = await env.DB
+          .prepare('SELECT * FROM siba_hospedes WHERE reserva_id = ? ORDER BY criado_em')
+          .bind(reservaId).all();
+        return json({ data: results });
+      }
+
+      if (pathname === '/api/siba' && request.method === 'POST') {
+        const body = await request.json().catch(() => null);
+        if (!body || !body.reserva_id) return json({ error: 'Payload inválido' }, 400);
+        await garantirTabelaSiba(env.DB);
+        await limparSibaExpirados(env.DB);
+
+        const dias = Number(env.SIBA_RETENCAO_DIAS) || SIBA_RETENCAO_DIAS_DEFAULT;
+        const expira = new Date(Date.now() + dias * 86400000).toISOString();
+        const id = body.id || crypto.randomUUID();
+        const valores = SIBA_COLS.map((c) => (body[c] ?? null));
+
+        await env.DB.prepare(
+          `INSERT INTO siba_hospedes (id, reserva_id, ${SIBA_COLS.join(', ')}, criado_em, expira_em)
+           VALUES (?, ?, ${SIBA_COLS.map(() => '?').join(', ')}, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             ${SIBA_COLS.map((c) => `${c} = excluded.${c}`).join(', ')},
+             expira_em = excluded.expira_em`
+        ).bind(id, body.reserva_id, ...valores, new Date().toISOString(), expira).run();
+
+        return json({ ok: true, id, expira_em: expira });
+      }
+
+      if (pathname === '/api/siba' && request.method === 'DELETE') {
+        const id = url.searchParams.get('id');
+        const reservaId = url.searchParams.get('reserva_id');
+        await garantirTabelaSiba(env.DB);
+        if (id) {
+          await env.DB.prepare('DELETE FROM siba_hospedes WHERE id = ?').bind(id).run();
+        } else if (reservaId) {
+          await env.DB.prepare('DELETE FROM siba_hospedes WHERE reserva_id = ?').bind(reservaId).run();
+        } else {
+          return json({ error: 'Indica id ou reserva_id' }, 400);
+        }
+        return json({ ok: true });
+      }
+
+      if (pathname === '/api/siba/extrair' && request.method === 'POST') {
+        const body = await request.json().catch(() => null);
+        if (!body || !body.imagem) return json({ error: 'Imagem em falta' }, 400);
+        try {
+          const campos = await extrairDocumento(
+            env, body.imagem, body.media_type || 'image/jpeg');
+          return json({ ok: true, campos });
+        } catch (e) {
+          return json({ error: e.message }, 502);
+        }
       }
 
       const reservaMatch = pathname.match(/^\/api\/reservas\/([^/]+)$/);
