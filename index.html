@@ -1432,22 +1432,57 @@ function sibaFotografar(i) {
   document.getElementById('sibaFoto').click();
 }
 
+// As fotos do telemóvel têm vários MB e é o upload — não a leitura — que
+// domina o tempo de espera. Reduzir para 1600px chega de sobra para ler a
+// zona de leitura ótica e corta o tamanho em mais de 90%.
+async function sibaReduzirImagem(file, maxLado = 1600, qualidade = 0.85) {
+  let largura, altura, fonte;
+  try {
+    fonte = await createImageBitmap(file);
+    largura = fonte.width; altura = fonte.height;
+  } catch (e) {
+    fonte = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+    largura = fonte.naturalWidth; altura = fonte.naturalHeight;
+  }
+  const escala = Math.min(1, maxLado / Math.max(largura, altura));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(largura * escala);
+  canvas.height = Math.round(altura * escala);
+  canvas.getContext('2d').drawImage(fonte, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', qualidade));
+  if (!blob) throw new Error('falhou a redução');
+  return blob;
+}
+
 document.getElementById('sibaFoto').addEventListener('change', async function(e) {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file || SIBA.alvoFoto === null) return;
   const i = SIBA.alvoFoto;
-  showToast('A ler o documento...', 40);
+  showToast('A preparar a imagem...', 20);
   try {
+    let envio = file, tipo = file.type || 'image/jpeg';
+    try {
+      envio = await sibaReduzirImagem(file);
+      tipo = 'image/jpeg';
+    } catch (err) {
+      console.warn('Não consegui reduzir a imagem, envio o original:', err);
+    }
     const base64 = await new Promise((resolve, reject) => {
       const fr = new FileReader();
       fr.onload = () => resolve(String(fr.result).split(',')[1]);
       fr.onerror = reject;
-      fr.readAsDataURL(file);
+      fr.readAsDataURL(envio);
     });
+    showToast('A ler o documento...', 55);
     const resp = await apiFetch('/api/siba/extrair', {
       method: 'POST',
-      body: JSON.stringify({ imagem: base64, media_type: file.type || 'image/jpeg' })
+      body: JSON.stringify({ imagem: base64, media_type: tipo })
     });
     const c = resp.campos || {};
     for (const [chave] of SIBA_CAMPOS) if (c[chave]) SIBA.hospedes[i][chave] = c[chave];
