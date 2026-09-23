@@ -1245,17 +1245,15 @@ function caucaoBadge(r) {
 document.getElementById('currentDate').textContent = new Date().toLocaleDateString('pt-PT',{weekday:'short',day:'numeric',month:'long'});
 
 // ---- SERVICE WORKER (auto-atualização) ----
+// Não recarregamos a página automaticamente: o service worker vai à rede
+// buscar o HTML em cada carregamento, por isso qualquer abertura ou refresh
+// já traz a versão mais recente. Um reload automático ao mudar de service
+// worker punha alguns telemóveis num ciclo de recargas sem fim.
 if('serviceWorker' in navigator) {
-  let swReloaded = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if(swReloaded) return;
-    swReloaded = true;
-    location.reload();
-  });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').then(reg => {
       reg.update();
-      // Verifica nova versão sempre que a app volta a primeiro plano (útil no iPhone)
+      // Procura nova versão quando a app volta a primeiro plano (útil no iPhone).
       document.addEventListener('visibilitychange', () => {
         if(document.visibilityState === 'visible') reg.update();
       });
