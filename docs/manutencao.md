@@ -32,6 +32,22 @@ Duas coisas que são tratadas fora do repositório:
 
 - **Apagar os artifacts já publicados.** A correção ao workflow só protege o
   futuro; os artifacts antigos continuam lá até serem apagados ou expirarem.
+
+  > **Filtrar sempre por `name == "debug-screenshots"`.** Apagar *todos* os
+  > artifacts do repositório parte o deploy do GitHub Pages: o workflow
+  > `pages build and deployment` empacota o site num artifact temporário
+  > chamado **`github-pages`**, que o passo `deploy` vai buscar poucos
+  > segundos depois. Se for apagado nesse intervalo, o deploy falha com
+  > `No artifacts named "github-pages" were found`. Já aconteceu, a 6 de
+  > novembro de 2026. Não é grave — o site continua a servir a versão
+  > anterior e basta re-correr o workflow — mas evita-se assim:
+  >
+  > ```bash
+  > gh api -X GET repos/PN1990/santiago-al-dashboard/actions/artifacts \
+  >   --paginate -q '.artifacts[] | select(.name=="debug-screenshots") | .id' \
+  >   | xargs -I{} gh api -X DELETE \
+  >       repos/PN1990/santiago-al-dashboard/actions/artifacts/{}
+  > ```
 - **Baixar a retenção de artifacts** em Settings → Actions → General, de 90
   dias para 1 dia.
 
