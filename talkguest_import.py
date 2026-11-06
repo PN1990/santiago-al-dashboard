@@ -379,7 +379,7 @@ def _texto_email(msg):
             pass
     return "\n".join(partes)
 
-def ler_codigo_2fa(desde_utc, timeout=150):
+def ler_codigo_2fa(desde_utc, timeout=240):
     """Procura no Gmail (IMAP) o código de 2FA mais recente da Talkguest."""
     if not MAIL_2FA_ADDRESS or not MAIL_2FA_PASSWORD:
         raise Exception("MAIL_2FA_ADDRESS/MAIL_2FA_PASSWORD não definidos, mas a Talkguest pediu 2FA.")

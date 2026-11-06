@@ -2,7 +2,13 @@ name: Importar Reservas Talkguest
 
 on:
   schedule:
+    # Corrida principal: todos os dias às 7h UTC (8h/9h em Portugal).
     - cron: '0 7 * * *'
+    # Rede de segurança: se a corrida da manhã falhar (tipicamente o 2FA),
+    # esta repete o trabalho ao meio-dia. A importação é idempotente —
+    # substitui sempre a lista completa de reservas — por isso correr duas
+    # vezes no mesmo dia não duplica nada.
+    - cron: '0 12 * * *'
   workflow_dispatch:
 
 jobs:
@@ -39,10 +45,18 @@ jobs:
           MAIL_2FA_FOLDER:    ${{ secrets.MAIL_2FA_FOLDER }}
         run: python talkguest_import.py
 
-      - name: Upload screenshots de debug (sempre)
-        if: always()
+      # ATENÇÃO (privacidade): este repositório é público e os artifacts de
+      # repositórios públicos podem ser descarregados por qualquer pessoa.
+      # Os screenshots tirados DEPOIS do login (tg_4*, tg_5*) mostram a lista
+      # de reservas com nomes de hóspedes, por isso nunca são publicados.
+      # Só se publicam os passos de login/2FA, e só quando a corrida falha.
+      - name: Upload screenshots de debug (só em caso de falha)
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: debug-screenshots
-          path: /tmp/tg_*.png
+          path: |
+            /tmp/tg_0*.png
+            /tmp/tg_1*.png
+            /tmp/tg_3*.png
           if-no-files-found: ignore
